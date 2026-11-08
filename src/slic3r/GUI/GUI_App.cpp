@@ -5641,6 +5641,21 @@ std::string GUI_App::handle_web_request(std::string cmd)
             else if (command_str.compare("homepage_open_cloud") == 0) {
                 this->open_orca_cloud();
             }
+            else if (command_str.compare("homepage_open_model_site") == 0) {
+                std::string site;
+                if (auto data = root.get_child_optional("data"))
+                    site = data->get<std::string>("site", "");
+                CallAfter([site]() {
+                    if (WebViewPanel* home = WebViewPanel::if_built())
+                        home->set_model_site(site);
+                });
+            }
+            else if (command_str.compare("homepage_close_model_site") == 0) {
+                CallAfter([]() {
+                    if (WebViewPanel* home = WebViewPanel::if_built())
+                        home->set_model_site({});
+                });
+            }
             else if (command_str.compare("homepage_close_cloud") == 0) {
                 CallAfter([]() {
                     if (WebViewPanel* home = WebViewPanel::if_built())

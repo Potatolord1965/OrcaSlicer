@@ -135,11 +135,11 @@ function HandleStudio( pVal )
       $("#BambuCloudSection").hide();
     }
 
-    if (providers.indexOf("orca") >= 0) {
-      $("#LeftBoard").show();
-    } else {
-      $("#LeftBoard").hide();
-    }
+    // The nav column always shows: it carries the model-site tabs even without Orca Cloud.
+    $("#LeftBoard").show();
+    let bOrca = providers.indexOf("orca") >= 0;
+    $("#OrcaAccount").toggle(bOrca);
+    $(".BtnItem[menu='orca_cloud']").toggle(bOrca);
   } else if (strCmd == "network_plugin_installtip") {
     // Bambu Cloud is unreachable without the network plugin, so its row only carries the tip.
     let bMissing = pVal["show"] * 1 == 1;
@@ -163,23 +163,52 @@ function HandleStudio( pVal )
   }
 }
 
-/*---- OrcaCloud opens as a native pane beside this page, so the shell only switches its
-      own cloud-mode state and asks the app to show or hide that pane (WebViewPanel::set_cloud_mode). ----*/
+/*---- OrcaCloud and the model sites open as native panes beside this page, so the shell only
+      tracks which pane is open and asks the app to show or hide it (WebViewPanel::set_cloud_mode,
+      WebViewPanel::set_model_site). m_PaneMenu is the nav item of the open pane, or "". ----*/
 var m_CloudMode=false;
+var m_PaneMenu="";
 
-function SetCloudMode( bOn )
+function SetPaneMenu( strMenu )
 {
-	if( m_CloudMode==bOn )
-		return;
+	m_PaneMenu=strMenu;
+	m_CloudMode=(strMenu=="orca_cloud");
+	$("body").toggleClass("cloud-mode", strMenu!="");
 
-	m_CloudMode=bOn;
-	$("body").toggleClass("cloud-mode", bOn);
-
-	if( bOn )
+	if( strMenu!="" )
 	{
 		$(".BtnItem").removeClass("BtnItemSelected");
-		$(".BtnItem[menu='orca_cloud']").addClass("BtnItemSelected");
+		$(".BtnItem[menu='"+strMenu+"']").addClass("BtnItemSelected");
 	}
+}
+
+// Closes whichever native pane is open, telling the app.
+function ClosePane()
+{
+	if( m_PaneMenu=="orca_cloud" )
+		SendSimpleCommand("homepage_close_cloud");
+	else if( m_PaneMenu!="" )
+		SendSimpleCommand("homepage_close_model_site");
+	SetPaneMenu("");
+}
+
+// Also called by the app (RunScript) when it opens the cloud pane natively.
+function SetCloudMode( bOn )
+{
+	if( bOn )
+	{
+		if( m_PaneMenu!="orca_cloud" && m_PaneMenu!="" )
+			SendSimpleCommand("homepage_close_model_site");
+		SetPaneMenu("orca_cloud");
+	}
+	else if( m_PaneMenu=="orca_cloud" )
+		SetPaneMenu("");
+}
+
+// Called by the app (RunScript) to restore the highlight after a homepage reload.
+function SetModelSiteMode( strSite )
+{
+	SetPaneMenu(strSite ? "site_"+strSite : "");
 }
 
 function GotoCloud()
@@ -188,14 +217,24 @@ function GotoCloud()
 	SendSimpleCommand("homepage_open_cloud");
 }
 
+function GotoModelSite( strSite )
+{
+	if( m_PaneMenu=="orca_cloud" )
+		SendSimpleCommand("homepage_close_cloud");
+	SetPaneMenu("site_"+strSite);
+
+	var tSend={};
+	tSend['sequence_id']=Math.round(new Date() / 1000);
+	tSend['command']="homepage_open_model_site";
+	tSend['data']={ site: strSite };
+	SendWXMessage( JSON.stringify(tSend) );
+}
+
 function GotoMenu( strMenu )
 {
-	/*---- Any board in the right region means leaving the cloud pane. ----*/
-	if( m_CloudMode )
-	{
-		SetCloudMode(false);
-		SendSimpleCommand("homepage_close_cloud");
-	}
+	/*---- Any board in the right region means leaving the open pane. ----*/
+	if( m_PaneMenu!="" )
+		ClosePane();
 
 	let MenuList=$(".BtnItem");
 	let nAll=MenuList.length;

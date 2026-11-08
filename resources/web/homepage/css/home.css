@@ -438,6 +438,20 @@ body
 	margin-top: 30px;	
 }
 
+#ModelSiteArea
+{
+	margin-top: 18px;
+}
+
+.NavSectionTitle
+{
+	padding: 0 18px 6px 18px;
+	font-size: 12px;
+	text-transform: uppercase;
+	letter-spacing: 0.04em;
+	opacity: 0.6;
+}
+
 .BtnItem
 {
     padding-left:18px;

@@ -134,6 +134,14 @@ public:
     // been created yet, the sign-out is remembered and applied when it is first opened.
     void cloud_signed_out(const wxString& signout_url);
 
+    // Shows the model-site pane (Unlayered Universe, MakerWorld, Nexprint, Thingiverse) beside the
+    // homepage nav column and loads `site`'s home page; an empty or unknown id hides the pane.
+    // Model files and "Open in slicer" links followed in the pane are imported into the plater.
+    void set_model_site(const std::string& site);
+
+    // Id of the model site shown in the pane, or empty while the pane is hidden.
+    std::string model_site() const { return m_model_browser && m_model_browser->IsShown() ? m_model_site : std::string(); }
+
     bool Show(bool show = true) override;
 private:
     void create_browser();
@@ -157,9 +165,14 @@ private:
     void clear_cloud_storage();
     // Re-applies the content sizer's proportions and min sizes for the cloud state.
     void apply_cloud_layout(bool cloud_on);
+    void create_model_browser();
+    // Consumes the model-site pane's webview events and diverts model downloads to the importer.
+    void OnModelWebViewEvent(wxWebViewEvent& evt);
 
     wxWebView* m_browser;
     wxWebView* m_cloud_browser{nullptr};
+    wxWebView* m_model_browser{nullptr};
+    std::string m_model_site;
     wxBoxSizer* m_content_sizer{nullptr};
     wxString m_home_url;
     bool m_reset_on_show{false};
