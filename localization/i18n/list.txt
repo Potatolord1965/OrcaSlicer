@@ -285,6 +285,7 @@ src/slic3r/Utils/SimplyPrint.cpp
 src/slic3r/Utils/Flashforge.cpp
 src/slic3r/Utils/ElegooCloud.cpp
 src/slic3r/Utils/ElegooLink.cpp
+src/slic3r/Utils/MarkforgedEiger.cpp
 src/slic3r/Utils/CrealityPrint.cpp
 src/slic3r/Utils/CrealityCloudPrinterAgent.cpp
 src/slic3r/Utils/CrealityCloudServiceAgent.cpp

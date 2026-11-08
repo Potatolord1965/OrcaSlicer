@@ -89,6 +89,7 @@ struct SendSlots
     std::vector<SendSlot> slots;
     bool                  auto_refill{false};
     bool                  supports_auto_refill{false};
+    wxString              enable_label; // when set, a toggle that turns the mapping on or off (e.g. "Enable CFS")
 };
 
 struct SendOption
@@ -126,6 +127,8 @@ public:
     virtual wxString account_label() const { return {}; }
     // Printers that can be listed without signing in (e.g. a LAN printer from the preset).
     virtual bool     has_local_printers() const { return false; }
+    // Whether the printer maps project filaments to its own slots (Eiger takes materials from its preset).
+    virtual bool     has_filament_mapping() const { return true; }
 
     // Blocking; called on a worker thread. May throw std::exception with a user-facing message.
     virtual std::vector<SendPrinter> printers() = 0;
@@ -135,6 +138,8 @@ public:
     // Whether the dialog offers "send only" next to "print". Eiger-style backends use a choice option instead.
     virtual bool supports_upload_only() const { return true; }
 
+    // A job whose extended_info has "vendor_source_ready" = "1" already carries its file in source_path
+    // (e.g. an STL for Eiger) and is queued as is, without exporting G-code.
     // Turns the choices into an upload job. Returns an empty job and sets error to refuse.
     // A backend may also hand the job to another dialog (e.g. a LAN host dialog) and return an empty job without error.
     virtual PrintHostJob make_job(const SendRequest& request, const boost::filesystem::path& default_output, wxString& error) = 0;

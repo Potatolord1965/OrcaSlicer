@@ -786,6 +786,8 @@ set(SLIC3R_GUI_SOURCES
     Utils/ElegooCloud.cpp
     Utils/ElegooCloud.hpp
     Utils/ElegooLink.cpp
+    Utils/MarkforgedEiger.cpp
+    Utils/MarkforgedEiger.hpp
     Utils/ElegooLink.hpp
     Utils/EmbossStyleManager.cpp
     Utils/EmbossStyleManager.hpp
