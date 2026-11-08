@@ -206,6 +206,8 @@
 #include "../Utils/Moonraker.hpp"
 #include "libslic3r/BedMesh.hpp"
 #include "MainFrame.hpp"
+#include "DeviceHub/DeviceHubPanel.hpp"
+#include "slic3r/Utils/CloudProvider.hpp"
 #ifdef SLIC3R_CAD
 #include "slic3r/GUI/CAD/DesignPanel.hpp"
 #endif
@@ -13919,33 +13921,32 @@ void Plater::priv::on_tab_selection_changing(wxBookCtrlEvent& e)
     const bool use_printer_agents = wxGetApp().app_config->get_bool("use_printer_agents");
     const bool use_native_device_tab = wxGetApp().preset_bundle &&
         (wxGetApp().preset_bundle->use_bbl_device_tab() || use_printer_agents);
-    if (use_native_device_tab && new_name == TAB_ID_MONITOR) {
+    if (new_name != TAB_ID_MONITOR || main_frame->m_device_hub == nullptr)
+        return;
+
+    // Unified Slicer: the Device tab is the device hub; what the old Device tabs did on selection
+    // now depends on the hub page that is showing.
+    DeviceHubPanel* hub = main_frame->m_device_hub;
+    if (use_native_device_tab && hub->selected() == DeviceHubPanel::PAGE_PRINTER) {
         // BBL network module is only required for BBL-vendor printers.
         // Non-BBL Python plugins (e.g. moonraker) drive the Device tab without it.
         if (!use_printer_agents && wxGetApp().preset_bundle->is_bbl_vendor() && !Slic3r::NetworkAgent::is_network_module_loaded()) {
-            e.Veto();
-            BOOST_LOG_TRIVIAL(info) << boost::format("skipped tab switch from %1% to %2%, lack of network plugins") % old_sel % new_sel;
+            // The other services stay usable: open the Bambu page, which offers the install.
+            hub->select(BBL_CLOUD_PROVIDER);
+            BOOST_LOG_TRIVIAL(info) << boost::format("Device tab without network plugins (from tab %1%)") % old_sel;
             if (q) {
                 wxCommandEvent* evt = new wxCommandEvent(EVT_INSTALL_PLUGIN_HINT);
                 wxQueueEvent(q, evt);
             }
         }
-    } else {
-        // Pointer test, not a name lookup: in printer-agents mode this page is TAB_ID_MONITOR_WEB
-        // while the native Device tab holds TAB_ID_MONITOR, and in legacy-web mode it holds
-        // TAB_ID_MONITOR itself.
-        const bool selecting_web_device_tab = main_frame->m_printer_view_page &&
-            main_frame->m_tabpanel->GetPage(new_sel) == main_frame->m_printer_view_page;
-        if (selecting_web_device_tab) {
-            // Use the selected discovered machine when the preset has no host.
-            main_frame->load_printer_url();
-        } else if (new_name == TAB_ID_MONITOR && wxGetApp().preset_bundle != nullptr) {
-            auto     cfg = wxGetApp().preset_bundle->printers.get_edited_preset().config;
-            wxString url = from_u8(PrintHost::get_print_host_webui(&cfg));
-            if (PrinterWebView* view = PrinterWebView::if_built(); view != nullptr && url.empty()) {
-                // It's missing_connection page, reload so that we can replay the gif image
-                view->reload();
-            }
+    } else if (hub->selected() == DeviceHubPanel::PAGE_WEB) {
+        // Use the selected discovered machine when the preset has no host.
+        main_frame->load_printer_url();
+        auto     cfg = wxGetApp().preset_bundle->printers.get_edited_preset().config;
+        wxString url = from_u8(PrintHost::get_print_host_webui(&cfg));
+        if (PrinterWebView* view = PrinterWebView::if_built(); view != nullptr && url.empty()) {
+            // It's missing_connection page, reload so that we can replay the gif image
+            view->reload();
         }
     }
 }

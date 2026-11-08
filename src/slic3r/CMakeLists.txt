@@ -890,6 +890,7 @@ endif ()
 
 add_subdirectory(GUI/DeviceCore)
 add_subdirectory(GUI/DeviceTab)
+add_subdirectory(GUI/DeviceHub)
 
 if (WIN32)
     list(APPEND SLIC3R_GUI_SOURCES

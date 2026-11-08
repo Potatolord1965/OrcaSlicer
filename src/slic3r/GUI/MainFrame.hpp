@@ -97,6 +97,7 @@ class DesignPanel;
 #endif
 class MainFrame;
 class WebViewPanel;
+class DeviceHubPanel;
 class ParamsDialog;
 enum class Shortcut : uint8_t;
 struct KeyChord;
@@ -533,6 +534,9 @@ public:
     LazyPage<CalibrationPanel>* m_calibration_page{ nullptr };
     LazyPage<WebViewPanel>* m_home_page { nullptr };
     LazyPage<PrinterWebView>* m_printer_view_page{nullptr};
+    // Unified Slicer: the Device tab. Its rail switches between the selected printer's pages
+    // (m_monitor_page, m_printer_view_page, both children of its book) and each cloud service.
+    DeviceHubPanel*       m_device_hub{nullptr};
     PluginPages           m_plugin_pages;
     wxLogWindow*          m_log_window { nullptr };
     // BBS

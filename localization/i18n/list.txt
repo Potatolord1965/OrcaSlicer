@@ -46,6 +46,8 @@ src/slic3r/GUI/DeviceCore/DevNozzleRack.cpp
 src/slic3r/GUI/DeviceCore/DevNozzleRackCtrl.cpp
 src/slic3r/GUI/DeviceCore/DevUtil.h
 src/slic3r/GUI/DeviceCore/DevUtil.cpp
+src/slic3r/GUI/DeviceHub/BuiltinCloudProviders.cpp
+src/slic3r/GUI/DeviceHub/DeviceHubPanel.cpp
 src/slic3r/GUI/DeviceTab/uiAmsHumidityPopup.h
 src/slic3r/GUI/DeviceTab/uiAmsHumidityPopup.cpp
 src/slic3r/GUI/DeviceTab/uiDeviceUpdateVersion.h
