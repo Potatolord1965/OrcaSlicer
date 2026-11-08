@@ -20,7 +20,7 @@
 
 #include "Http.hpp"
 #include "libslic3r/Utils.hpp"
-#include "libslic3r/libslic3r_version.h"
+#include "libslic3r_version.h"
 #include "slic3r/GUI/I18N.hpp"
 
 #ifdef _WIN32

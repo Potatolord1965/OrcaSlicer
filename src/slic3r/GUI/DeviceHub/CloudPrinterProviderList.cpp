@@ -17,9 +17,8 @@ void CloudPrinterProviders::register_builtin()
     registered = true;
 
     add(std::make_shared<BambuCloudProvider>());
-    // Elegoo: CC2 LAN agent bundled as resources/plugins/elegoo_cc2_lan.py; account "elegoo".
-    add(std::make_shared<PrinterAgentCloudProvider>(ELEGOO_CLOUD_PROVIDER, "Elegoo", 20, "elegoo_cc2", ELEGOO_CLOUD_PROVIDER,
-                                                    wxColour("#3A6FD8")));
+    // Elegoo: Elegoo cloud account (native) plus the CC2 LAN agent for printers on the local network.
+    add(std::make_shared<ElegooCloudProvider>());
     // Creality: cloud agent "creality_cloud" with account "creality".
     add(std::make_shared<PrinterAgentCloudProvider>("creality", "Creality", 30, "creality_cloud", "creality",
                                                     wxColour("#D8762C")));

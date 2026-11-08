@@ -106,4 +106,20 @@ public:
     void logout() override;
 };
 
+// Elegoo: the Elegoo cloud account (native client, slic3r/Utils/ElegooCloud) lists the account's
+// printers; printers on the local network also show through the CC2 LAN agent.
+class ElegooCloudProvider : public PrinterAgentCloudProvider
+{
+public:
+    ElegooCloudProvider();
+
+    bool     is_available() const override { return true; }
+    bool     is_logged_in() const override;
+    wxString account_name() const override;
+    void     login(wxWindow* parent) override;
+    void     logout() override;
+
+    void refresh_printers(PrintersCallback done) override;
+};
+
 }} // namespace Slic3r::GUI

@@ -26,6 +26,9 @@
 #include "slic3r/GUI/MainFrame.hpp"
 #include "slic3r/GUI/MsgDialog.hpp"
 #include "slic3r/Utils/CloudProvider.hpp"
+#include "slic3r/Utils/ElegooCloud.hpp"
+#include "slic3r/GUI/ElegooLoginDialog.hpp"
+#include <thread>
 #include "slic3r/Utils/ICloudServiceAgent.hpp"
 #include "slic3r/Utils/IPrinterAgent.hpp"
 #include "slic3r/Utils/NetworkAgent.hpp"
@@ -446,6 +449,69 @@ void MarkforgedCloudProvider::logout()
         write_markforged_settings(settings);
     }
     clear_printers();
+}
+
+// ---------------------------------------------------------------------------------------------
+// ElegooCloudProvider
+// ---------------------------------------------------------------------------------------------
+
+ElegooCloudProvider::ElegooCloudProvider()
+    : PrinterAgentCloudProvider(ELEGOO_CLOUD_PROVIDER, "Elegoo", 20, "elegoo_cc2", {}, wxColour("#3A6FD8"))
+{}
+
+bool ElegooCloudProvider::is_logged_in() const { return ElegooCloud::instance().signed_in(); }
+
+wxString ElegooCloudProvider::account_name() const
+{
+    return wxString::FromUTF8(ElegooCloud::instance().account_label());
+}
+
+void ElegooCloudProvider::login(wxWindow* parent) { ElegooLoginDialog::sign_in(parent); }
+
+void ElegooCloudProvider::logout()
+{
+    ElegooCloud::instance().sign_out();
+    clear_printers();
+}
+
+void ElegooCloudProvider::refresh_printers(PrintersCallback done)
+{
+    // Printers on the local network, from the LAN agent.
+    std::vector<CloudPrinter> lan;
+    PrinterAgentCloudProvider::refresh_printers([&lan](std::vector<CloudPrinter> printers, wxString) { lan = std::move(printers); });
+    if (!ElegooCloud::instance().signed_in()) {
+        done(std::move(lan), {});
+        return;
+    }
+    // The account's printers: blocking HTTPS, so off the GUI thread (the caller marshals the callback).
+    const std::string provider = id();
+    std::thread([done, lan = std::move(lan), provider]() mutable {
+        std::vector<CloudPrinter> out;
+        wxString                  error;
+        try {
+            for (const ElegooCloudPrinter& p : ElegooCloud::instance().printers()) {
+                CloudPrinter cp;
+                cp.provider_id = provider;
+                cp.id          = p.serial;
+                cp.name        = wxString::FromUTF8(p.name.empty() ? p.serial : p.name);
+                cp.model       = wxString::FromUTF8(p.model);
+                cp.online      = p.state >= 0;
+                cp.status      = p.state == 2 ? _L("Printing") : p.state == 1 ? _L("Idle") : _L("Unknown");
+                out.push_back(std::move(cp));
+            }
+        } catch (const std::exception& ex) {
+            error = wxString::FromUTF8(ex.what());
+        }
+        // A LAN printer the account also lists shows once (the cloud entry, keyed by serial).
+        for (CloudPrinter& p : lan) {
+            bool dup = false;
+            for (const CloudPrinter& c : out)
+                if (c.id == p.id) { dup = true; break; }
+            if (!dup)
+                out.push_back(std::move(p));
+        }
+        done(std::move(out), error);
+    }).detach();
 }
 
 }} // namespace Slic3r::GUI
