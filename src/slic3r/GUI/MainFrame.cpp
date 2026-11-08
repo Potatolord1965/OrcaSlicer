@@ -19,6 +19,7 @@
 #include <cstddef>
 #include "slic3r/GUI/Project.hpp"
 #include <wx/bookctrl.h>
+#include "slic3r/GUI/DeviceHub/DeviceHubPanel.hpp"
 #include "slic3r/GUI/LazyPage.hpp"
 #include "slic3r/GUI/Monitor.hpp"
 #include "slic3r/GUI/PrinterWebView.hpp"
@@ -857,10 +858,7 @@ bool MainFrame::handle_global_shortcut(const KeyChord& chord)
 #endif
     case Shortcut::GoToPrepare: m_tabpanel->SelectPageByName(TAB_ID_PREPARE); break;
     case Shortcut::GoToPreview: m_tabpanel->SelectPageByName(TAB_ID_PREVIEW); break;
-    case Shortcut::GoToDevice:
-        if (!m_tabpanel->SelectPageByName(TAB_ID_MONITOR))
-            m_tabpanel->SelectPageByName(TAB_ID_MONITOR_WEB);
-        break;
+    case Shortcut::GoToDevice: m_tabpanel->SelectPageByName(TAB_ID_MONITOR); break;
     case Shortcut::GoToMultiDevice: m_tabpanel->SelectPageByName(TAB_ID_MULTI_DEVICE); break;
     case Shortcut::GoToProject:     m_tabpanel->SelectPageByName(TAB_ID_PROJECT); break;
     case Shortcut::GoToCalibration: m_tabpanel->SelectPageByName(TAB_ID_CALIBRATION); break;
@@ -1603,17 +1601,27 @@ void MainFrame::init_tabpanel() {
     create_preset_tabs();
 
         //BBS add pages
-    m_monitor_page = new LazyPage<MonitorPanel>(m_tabpanel, TAB_ID_MONITOR, 20);
-    m_lazy_pages.push_back(m_monitor_page);
-    m_tabpanel->AddPage(TAB_ID_MONITOR, m_monitor_page, _L("Device"), "tab_monitor_active");
+    // Unified Slicer: one Device tab for every printer service. The native and web printer pages
+    // live in the hub's book; show_device() picks which of them the selected printer gets.
+    m_device_hub = new DeviceHubPanel(m_tabpanel);
+    m_tabpanel->AddPage(TAB_ID_MONITOR, m_device_hub, _L("Device"), "tab_monitor_active");
 
-    m_printer_view_page = new LazyPage<PrinterWebView>(m_tabpanel, TAB_ID_MONITOR_WEB, 50, [this](wxWindow* parent) {
+    m_monitor_page = new LazyPage<MonitorPanel>(m_device_hub->book(), TAB_ID_MONITOR, 20);
+    m_lazy_pages.push_back(m_monitor_page);
+
+    m_printer_view_page = new LazyPage<PrinterWebView>(m_device_hub->book(), TAB_ID_MONITOR_WEB, 50, [this](wxWindow* parent) {
         auto* view = new PrinterWebView(parent);
         if (!m_printer_url.empty())
             view->load_url(m_printer_url, m_printer_api_key);
         return view;
     });
     m_lazy_pages.push_back(m_printer_view_page);
+    m_device_hub->set_printer_pages(m_monitor_page, m_printer_view_page);
+    m_device_hub->set_on_page_selected([this](const std::string& key) {
+        // Use the selected discovered machine when the preset has no host.
+        if (key == DeviceHubPanel::PAGE_WEB)
+            load_printer_url();
+    });
     Bind(EVT_LOAD_PRINTER_URL, [this](LoadPrinterViewEvent &evt) {
         //select_tab(MainFrame::tpMonitor);
         m_printer_url     = evt.GetString();
@@ -1663,106 +1671,31 @@ void MainFrame::show_device(bool should_use_native) {
 
     const bool use_printer_agents = wxGetApp().app_config->get_bool("use_printer_agents");
 
-    // The web Device page is the extra tab printer-agents mode shows alongside the native one.
-    // Printers that drive the native Bambu device tab have nothing to put in it, so they don't
-    // get it — otherwise a Bambu user sees two Device tabs, one of them permanently empty.
-    const bool want_web_device_tab = use_printer_agents && wxGetApp().preset_bundle != nullptr &&
-                                     !wxGetApp().preset_bundle->use_bbl_device_tab();
+    // Unified Slicer: the Device tab is always the hub; the selected printer decides which of its
+    // own pages the hub's rail offers. Printer-agents mode shows the native page for every printer
+    // and the web page next to it unless the printer drives the native Bambu page; otherwise a
+    // printer gets either the native page or the web page.
+    const bool want_native = use_printer_agents || should_use_native;
+    const bool want_web    = use_printer_agents ? (wxGetApp().preset_bundle != nullptr && !wxGetApp().preset_bundle->use_bbl_device_tab()) :
+                                                  !should_use_native;
+    m_device_hub->show_printer_pages(want_native, want_web);
 
-    // Remove the extra page before switching to any layout that shouldn't have it.
-    if (!want_web_device_tab) {
-        if ((idx = m_tabpanel->FindPageByName(TAB_ID_MONITOR_WEB)) != wxNOT_FOUND) {
-            m_printer_view_page->Show(false);
-            m_tabpanel->RemovePage(idx);
-        }
-    }
-
-    if (use_printer_agents) {
-        if (!m_monitor_page->in_book()) {
-            if ((idx = m_tabpanel->FindPage(m_printer_view_page)) != wxNOT_FOUND) {
-                m_printer_view_page->Show(false);
-                m_tabpanel->RemovePage(idx);
-            }
-            m_monitor_page->Show(false);
-            m_tabpanel->InsertPage(m_tabpanel->PositionAfter({TAB_ID_PREVIEW}), TAB_ID_MONITOR, m_monitor_page,
-                                   _L("Device"), "tab_monitor_active");
-        }
-
-        if (wxGetApp().is_enable_multi_machine()) {
-            // TODO: change the bitmap
-            if (!m_multi_machine_page->in_book()) {
-                m_multi_machine_page->Show(false);
-                // Past the web Device tab when it is already there, so enabling multi-machine
-                // later can't wedge this page between the two Device tabs.
-                m_tabpanel->InsertPage(m_tabpanel->PositionAfter({TAB_ID_MONITOR_WEB, TAB_ID_MONITOR}),
-                                       TAB_ID_MULTI_DEVICE, m_multi_machine_page, _L("Multi-device"), "tab_multi_active");
-            }
-        }
-        if (!m_calibration_page->in_book()) {
-            m_calibration_page->Show(false);
-            m_tabpanel->InsertPage(m_tabpanel->PositionAfter({TAB_ID_PROJECT}), TAB_ID_CALIBRATION, m_calibration_page,
-                                   _L("Calibration"), "tab_calibration_active");
-        }
-
-        if (want_web_device_tab) {
-            if ((idx = m_tabpanel->FindPage(m_printer_view_page)) == wxNOT_FOUND) {
-                m_printer_view_page->Show(false);
-                // Immediately right of the native Device tab, not at the end of the tab bar.
-                m_tabpanel->InsertPage(m_tabpanel->PositionAfter({TAB_ID_MONITOR}), TAB_ID_MONITOR_WEB,
-                                       m_printer_view_page, _L("Device (Web)"), "tab_monitor_active");
-            } else {
-                m_tabpanel->SetPageText(idx, _L("Device (Web)"));
-            }
-        }
-
-#ifdef _MSW_DARK_MODE
-        wxGetApp().UpdateDarkUIWin(this);
-#endif // _MSW_DARK_MODE
-
-        fit_tab_labels(); // ORCA on printer change
-        m_plugin_pages.relayout(); // re-sync plugin tabs against the native tabs just mutated above
-        if (m_prebuild_started)
-            m_idle.start();
-        return;
-    }
-
-    if (should_use_native) {
-        if (m_monitor_page->in_book()) {
-            fit_tab_labels(); // ORCA on printer change - same button layout
-            return;
-        }
-        // Remove printer view
-        if ((idx = m_tabpanel->FindPage(m_printer_view_page)) != wxNOT_FOUND) {
-            m_printer_view_page->Show(false);
-            m_tabpanel->RemovePage(idx);
-        }
-
-        // Insert monitor page
-        m_monitor_page->Show(false);
-        m_tabpanel->InsertPage(m_tabpanel->PositionAfter({TAB_ID_PREVIEW}), TAB_ID_MONITOR, m_monitor_page,
-                               _L("Device"), "tab_monitor_active");
-
-        if (wxGetApp().is_enable_multi_machine()) {
+    // Multi-device and Calibration need the native device stack.
+    if (want_native) {
+        if (wxGetApp().is_enable_multi_machine() && !m_multi_machine_page->in_book()) {
             // TODO: change the bitmap
             m_multi_machine_page->Show(false);
             m_tabpanel->InsertPage(m_tabpanel->PositionAfter({TAB_ID_MONITOR}), TAB_ID_MULTI_DEVICE, m_multi_machine_page,
                                    _L("Multi-device"), "tab_multi_active");
         }
-        m_calibration_page->Show(false);
-        // Last of the built-in tabs, but plugin tabs already sit past it — anchor rather than
-        // append, so its position doesn't depend on the relayout() below running afterwards.
-        m_tabpanel->InsertPage(m_tabpanel->PositionAfter({TAB_ID_PROJECT}), TAB_ID_CALIBRATION, m_calibration_page,
-                               _L("Calibration"), "tab_calibration_active");
-
-#ifdef _MSW_DARK_MODE
-        wxGetApp().UpdateDarkUIWin(this);
-#endif // _MSW_DARK_MODE
-
-    } else {
-        if (m_printer_view_page->in_book()) {
-            fit_tab_labels(); // ORCA on printer change - same button layout
-            return;
+        if (!m_calibration_page->in_book()) {
+            m_calibration_page->Show(false);
+            // Last of the built-in tabs, but plugin tabs already sit past it — anchor rather than
+            // append, so its position doesn't depend on the relayout() below running afterwards.
+            m_tabpanel->InsertPage(m_tabpanel->PositionAfter({TAB_ID_PROJECT}), TAB_ID_CALIBRATION, m_calibration_page,
+                                   _L("Calibration"), "tab_calibration_active");
         }
+    } else {
         if ((idx = m_tabpanel->FindPage(m_calibration_page)) != wxNOT_FOUND) {
             m_calibration_page->Show(false);
             m_tabpanel->RemovePage(idx);
@@ -1771,14 +1704,12 @@ void MainFrame::show_device(bool should_use_native) {
             m_multi_machine_page->Show(false);
             m_tabpanel->RemovePage(idx);
         }
-        if ((idx = m_tabpanel->FindPage(m_monitor_page)) != wxNOT_FOUND) {
-            m_monitor_page->Show(false);
-            m_tabpanel->RemovePage(idx);
-        }
-        m_printer_view_page->Show(false);
-        m_tabpanel->InsertPage(m_tabpanel->PositionAfter({TAB_ID_PREVIEW}), TAB_ID_MONITOR, m_printer_view_page,
-                               _L("Device"), "tab_monitor_active");
     }
+
+#ifdef _MSW_DARK_MODE
+    wxGetApp().UpdateDarkUIWin(this);
+#endif // _MSW_DARK_MODE
+
     fit_tab_labels(); // ORCA on printer change
     m_plugin_pages.relayout(); // re-sync plugin tabs against the native tabs just mutated above
     if (m_prebuild_started)
@@ -2787,6 +2718,7 @@ void MainFrame::on_dpi_changed(const wxRect& suggested_rect)
     // A panel mid-build gets the pass once it is complete.
     ProjectPanel::when_built([](ProjectPanel& project) { project.msw_rescale(); });
     MonitorPanel::when_built([](MonitorPanel& monitor) { monitor.msw_rescale(); });
+    m_device_hub->msw_rescale();
     MultiMachinePage::when_built([](MultiMachinePage& multi_machine) { multi_machine.msw_rescale(); });
     CalibrationPanel::when_built([](CalibrationPanel& calibration) { calibration.msw_rescale(); });
 #ifdef SLIC3R_CAD
@@ -2855,6 +2787,7 @@ void MainFrame::on_sys_color_changed()
     // update Plater
     wxGetApp().plater()->sys_color_changed();
     MonitorPanel::when_built([](MonitorPanel& monitor) { monitor.on_sys_color_changed(); });
+    m_device_hub->on_sys_color_changed();
     CalibrationPanel::when_built([](CalibrationPanel& calibration) { calibration.on_sys_color_changed(); });
 #ifdef SLIC3R_CAD
     DesignPanel::when_built([](DesignPanel& design) { design.on_sys_color_changed(); });
@@ -4333,6 +4266,7 @@ void MainFrame::prebuild_pages_when_idle()
 void MainFrame::jump_to_monitor(std::string dev_id)
 {
     m_tabpanel->SelectPageByName(TAB_ID_MONITOR);
+    m_device_hub->select(DeviceHubPanel::PAGE_PRINTER);
     if (!dev_id.empty()) {
         MonitorPanel::ensure()->select_machine(dev_id);
     }
