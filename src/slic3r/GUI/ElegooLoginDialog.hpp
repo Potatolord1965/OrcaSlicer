@@ -1,5 +1,7 @@
 #pragma once
 
+#include <string>
+
 #include <wx/string.h>
 
 #include "GUI_Utils.hpp"
@@ -28,6 +30,7 @@ private:
     void on_script_message(wxWebViewEvent& evt);
     void respond(const wxString& id, const wxString& method, bool ok, const wxString& message);
     void load_page();
+    static std::string device_id();
 
     wxWebView* m_browser{nullptr};
 };

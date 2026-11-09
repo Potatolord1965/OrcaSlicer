@@ -59,7 +59,7 @@ ElegooLoginDialog::ElegooLoginDialog(wxWindow* parent)
 
     m_browser = WebView::CreateWebView(this, wxEmptyString);
     if (m_browser != nullptr) {
-        m_browser->SetUserAgent(wxString::FromUTF8(ElegooCloud::user_agent() + " Mozilla/5.0"));
+        m_browser->SetUserAgent(wxString::FromUTF8(ElegooCloud::login_user_agent(wxGetApp().dark_mode())));
         Bind(wxEVT_WEBVIEW_SCRIPT_MESSAGE_RECEIVED, &ElegooLoginDialog::on_script_message, this, m_browser->GetId());
         Bind(wxEVT_WEBVIEW_NEWWINDOW, [](wxWebViewEvent& e) { wxLaunchDefaultBrowser(e.GetURL()); }, m_browser->GetId());
         sizer->Add(m_browser, 1, wxEXPAND);
@@ -77,7 +77,19 @@ ElegooLoginDialog::ElegooLoginDialog(wxWindow* parent)
 void ElegooLoginDialog::load_page()
 {
     if (m_browser != nullptr)
-        WebView::LoadUrl(m_browser, wxString::FromUTF8(ElegooCloud::instance().login_url(wxGetApp().dark_mode())));
+        WebView::LoadUrl(m_browser, wxString::FromUTF8(ElegooCloud::instance().login_url(wxGetApp().dark_mode(), device_id())));
+}
+
+// The page and the tokens it issues are tied to a stable device id; keep one per installation.
+std::string ElegooLoginDialog::device_id()
+{
+    AppConfig*  cfg = wxGetApp().app_config;
+    std::string id  = cfg->get("vendor_send", "elegoo_device_id");
+    if (id.empty()) {
+        id = boost::uuids::to_string(boost::uuids::random_generator()());
+        cfg->set("vendor_send", "elegoo_device_id", id);
+    }
+    return id;
 }
 
 void ElegooLoginDialog::on_dpi_changed(const wxRect&) { Layout(); }
@@ -108,18 +120,19 @@ void ElegooLoginDialog::on_script_message(wxWebViewEvent& evt)
         std::string error;
         const bool  ok = ElegooCloud::instance().accept_login_report(msg.value("params", json::object()), error);
         respond(id, method, ok, wxString::FromUTF8(error));
-        if (ok)
+        if (ok) {
             CallAfter([this]() { EndModal(wxID_OK); });
+        } else {
+            // Without this the page sits on its loading screen and the window never closes.
+            BOOST_LOG_TRIVIAL(warning) << "Elegoo sign-in not accepted: " << error;
+            CallAfter([this, error]() {
+                wxMessageBox(wxString::FromUTF8(error), _L("Sign in to Elegoo"), wxOK | wxICON_WARNING, this);
+                load_page();
+            });
+        }
     } else if (method == "report.ready") {
         respond(id, method, true, {});
-        // The page asks for a stable device id; keep one per installation.
-        AppConfig*  cfg       = wxGetApp().app_config;
-        std::string device_id = cfg->get("vendor_send", "elegoo_device_id");
-        if (device_id.empty()) {
-            device_id = boost::uuids::to_string(boost::uuids::random_generator()());
-            cfg->set("vendor_send", "elegoo_device_id", device_id);
-        }
-        const json event = {{"method", "client.setDeviceId"}, {"type", "event"}, {"data", {{"deviceId", device_id}}}};
+        const json event = {{"method", "client.setDeviceId"}, {"type", "event"}, {"data", {{"deviceId", device_id()}}}};
         WebView::RunScript(m_browser, wxString::FromUTF8("window.HandleStudio && window.HandleStudio(" + event.dump() + ")"));
     } else if (method == "report.websiteOpen") {
         respond(id, method, true, {});

@@ -115,7 +115,8 @@ public:
     void               set_region(const std::string& region);
 
     // Login page of the Elegoo account site; it reports the tokens back over the WebView bridge.
-    std::string login_url(bool dark) const;
+    std::string        login_url(bool dark, const std::string& device_id) const;
+    static std::string login_user_agent(bool dark);
     // Fills the account from the tokens a login page reported ("report.userInfo" params).
     bool accept_login_report(const nlohmann::json& params, std::string& error);
 
