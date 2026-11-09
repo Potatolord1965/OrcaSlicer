@@ -1,4 +1,5 @@
 #include "VendorSendDialog.hpp"
+#include "ElegooPrintSendDialog.hpp"
 
 #include <algorithm>
 #include <atomic>
@@ -1155,6 +1156,10 @@ private:
 std::optional<PrintHostJob> show_vendor_send_dialog(wxWindow* parent, SendVendor vendor, std::shared_ptr<VendorSendBackend> backend,
                                                     const SendJobSummary& job, const fs::path& default_output)
 {
+    // Elegoo printers get ElegooSlicer's own send page when it can be shown.
+    if (std::optional<PrintHostJob> result; vendor == SendVendor::Elegoo &&
+                                            show_elegoo_print_send_dialog(parent, backend, job, default_output, result))
+        return result;
     VendorSendDialog dlg(parent, vendor, std::move(backend), job, default_output);
     if (dlg.ShowModal() != wxID_OK)
         return std::nullopt;

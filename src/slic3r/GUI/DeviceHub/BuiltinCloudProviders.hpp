@@ -123,6 +123,8 @@ public:
     void     logout() override;
 
     void refresh_printers(PrintersCallback done) override;
+    // The printer list, with an opened cloud printer's page shown in its place.
+    wxWindow* create_page(wxWindow* parent) override;
     void open_printer(wxWindow* parent, const std::string& printer_id) override;
 };
 

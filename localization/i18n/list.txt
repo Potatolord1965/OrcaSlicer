@@ -253,7 +253,9 @@ src/slic3r/GUI/CaliHistoryDialog.cpp
 src/slic3r/GUI/BonjourDialog.cpp
 src/slic3r/GUI/calib_dlg.cpp
 src/slic3r/GUI/PrintHostDialogs.cpp
+src/slic3r/GUI/ElegooCloudMonitor.cpp
 src/slic3r/GUI/ElegooLoginDialog.cpp
+src/slic3r/GUI/ElegooPrintSendDialog.cpp
 src/slic3r/GUI/VendorSendBackends.cpp
 src/slic3r/GUI/VendorSendDialog.cpp
 src/slic3r/GUI/Gizmos/GLGizmoMeshBoolean.cpp
