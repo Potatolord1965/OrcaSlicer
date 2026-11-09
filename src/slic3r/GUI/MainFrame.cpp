@@ -95,6 +95,7 @@
 #include "I18N.hpp"
 #include "GLCanvas3D.hpp"
 #include "Plater.hpp"
+#include "OtherSlicerImportDialog.hpp"
 #ifdef SLIC3R_CAD
 #include "slic3r/GUI/CAD/DesignPanel.hpp"
 #include "slic3r/GUI/CAD/McpControl.hpp"
@@ -3060,6 +3061,10 @@ void MainFrame::init_menubar_as_editor()
             [this]() { return can_add_models(); });
         append_menu_item(import_menu, wxID_ANY, _L("Import Configs") + dots /*+ "\t" + ctrl + "I"*/, _L("Load configs"),
             [this](wxCommandEvent&) { load_config_file(); }, "menu_import", nullptr,
+            [](){return true; }, this);
+        append_menu_item(import_menu, wxID_ANY, _L("Import Settings from Other Slicers") + dots,
+            _L("Import your printer, filament and process presets from OrcaSlicer, Bambu Studio, PrusaSlicer and other slicers"),
+            [this](wxCommandEvent&) { OtherSlicerImportDialog::run(this); }, "menu_import", nullptr,
             [](){return true; }, this);
 
         append_submenu(fileMenu, import_menu, wxID_ANY, _L("Import"), "");

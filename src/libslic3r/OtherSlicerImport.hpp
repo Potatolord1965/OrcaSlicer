@@ -44,7 +44,7 @@ namespace OtherSlicers {
 enum class App {
     PrusaSlicer, OrcaSlicer, BambuStudio,
     CrealityPrint, SuperSlicer, ElegooSlicer, AnycubicSlicerNext, SnapmakerOrca, QIDIStudio, FlashStudio, PhrozenOrca,
-    FlsunSlicer
+    FlsunSlicer, UnlayeredSlicer
 };
 enum class Kind { Printer, Filament, Process };
 

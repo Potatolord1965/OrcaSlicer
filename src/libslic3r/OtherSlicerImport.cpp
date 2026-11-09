@@ -80,6 +80,10 @@ const std::vector<AppInfo> &apps()
         {App::PhrozenOrca, "PhrozenOrca", "phrozenorca", false, {"PhrozenOrca"}, "PhrozenOrca.conf", "",
          {"PhrozenOrca/resources/profiles"}, {"/Applications/PhrozenOrca.app/Contents/Resources/profiles"}, {}},
         {App::FlsunSlicer, "FlsunSlicer", "flsunslicer", true, {"FlsunSlicer"}, "FlsunSlicer.ini", "", {}, {}, {}},
+        // Unlayered Slicer: an OrcaSlicer fork (SLIC3R_APP_KEY "Unlayered Slicer").
+        {App::UnlayeredSlicer, "Unlayered Slicer", "unlayeredslicer", false, {"Unlayered Slicer"}, "Unlayered Slicer.conf", "",
+         {"Unlayered Slicer/resources/profiles", "Unlayered3D/Unlayered Slicer/resources/profiles"},
+         {"/Applications/Unlayered Slicer.app/Contents/Resources/profiles"}, {}},
     };
     return table;
 }
