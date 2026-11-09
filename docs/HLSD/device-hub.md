@@ -15,6 +15,7 @@ shows the selected one.
 | Elegoo      |                                            |
 | Creality    |                                            |
 | Markforged  |                                            |
+| USB & LAN   |                                            |
 +-------------+--------------------------------------------+
 ```
 
@@ -47,6 +48,7 @@ button:
 | `brand_colour()` | Accent of the selected rail button and the page's primary button. On the Printer, Web UI and All printers pages the accent is that of the selected printer preset's provider, so it follows the printer's brand. |
 | `is_available()`, `unavailable_reason()`, `install_or_enable()` | The service can't be used at all (plug-in missing); the page says why and offers an Install button. |
 | `is_logged_in()`, `account_name()`, `login(parent)`, `logout()` | The service's own account, independent of the others. |
+| `has_account()` | False for an entry with no account: the page shows `account_name()` as its subtitle and the primary button runs `login()` as "Add printer". |
 | `refresh_printers(done)` | The printers to list. `done` may run on any thread. |
 | `create_page(parent)` | Optional page of the provider's own instead of the generic one. |
 | `open_printer(parent, id)` | Double-click in a list. |
@@ -80,3 +82,11 @@ user looks at it.
 
 A provider whose agent is not registered (plug-in not installed or turned off) shows as unavailable
 rather than disappearing, so the rail stays the same from one start to the next.
+- `LocalPrintersProvider` (`local`, "USB & LAN", last on the rail): printers that belong to none of
+  the services. It lists visible printer presets with a `print_host` (OctoPrint, Moonraker,
+  PrusaLink, Duet, ...) that no other provider's `handles_printer_preset()` claims, with Online or
+  Offline from a TCP connect to the host (on a worker thread, one probe run at a time), and USB
+  serial devices (`scan_serial_ports_extended()`, ports with a USB VID/PID). There is no account:
+  "Add printer" opens the Connection dialog (`PhysicalPrinterDialog`) for the selected preset.
+  Opening a network printer selects its preset and opens its Web UI page; the app can't print over
+  USB, so opening a USB device explains the alternatives.

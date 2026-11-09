@@ -76,7 +76,7 @@ CloudProviderPage::CloudProviderPage(wxWindow* parent, CloudPrinterProviderPtr p
     m_login_btn->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) {
         if (!m_provider)
             return;
-        if (m_provider->is_logged_in())
+        if (m_provider->has_account() && m_provider->is_logged_in())
             m_provider->logout();
         else
             m_provider->login(this);
@@ -180,6 +180,10 @@ void CloudProviderPage::update_header()
         m_account->SetLabel(_L("Not available"));
         m_notice->SetLabel(m_provider->unavailable_reason());
         m_notice->Wrap(FromDIP(600));
+    } else if (!m_provider->has_account()) {
+        m_account->SetLabel(m_provider->account_name());
+        m_login_btn->SetLabel(_L("Add printer"));
+        style_primary(m_login_btn, ButtonType::Window, m_accent);
     } else if (m_provider->is_logged_in()) {
         const wxString name = m_provider->account_name();
         // TRN %1% is the account name of a printer cloud service.
