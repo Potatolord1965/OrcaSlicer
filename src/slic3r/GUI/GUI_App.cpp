@@ -194,6 +194,7 @@
 #include "3DScene.hpp"
 #include "MainFrame.hpp"
 #include "Plater.hpp"
+#include "OtherSlicerImportDialog.hpp"
 #include "GLCanvas3D.hpp"
 #include "EncodedFilament.hpp"
 #include "GeneratedConfig.hpp"
@@ -1140,6 +1141,8 @@ void GUI_App::post_init()
                 this->preset_updater->sync(http_url, language, network_ver, sys_preset ? preset_bundle : nullptr);
             }
 
+            // Presets in other slicers on this computer, offered on the first run and after updates.
+            ask_import_other_slicers_once(*this);
             this->check_new_version_sf();
             if (!cw_showed)
                 this->check_legacy_user_filament_presets(false);
