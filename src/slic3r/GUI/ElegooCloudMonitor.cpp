@@ -650,7 +650,12 @@ void show_elegoo_cloud_monitor(wxWindow* parent, const std::string& serial, cons
     }
     wxDialog*      dlg  = nullptr;
     const wxString page = elegooslicer_cloud_page();
-    if (!page.empty() && WebView::CheckWebViewRuntime())
+#if wxUSE_WEBVIEW_EDGE
+    const bool webview_ok = WebView::CheckWebViewRuntime();
+#else
+    const bool webview_ok = true;
+#endif
+    if (!page.empty() && webview_ok)
         dlg = new ElegooCloudPageDialog(parent, serial, name, page);
     else
         dlg = new ElegooCloudMonitorDialog(parent, serial, name);
