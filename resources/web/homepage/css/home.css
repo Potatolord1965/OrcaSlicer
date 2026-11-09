@@ -813,7 +813,7 @@ body.cloud-mode #LeftBoard
 .CT_Item:hover
 {
 	cursor: pointer;
-	background-color:#009688;
+	background-color:#767676;
 	border-radius: 4px;
 	color: #fff;
 }
@@ -1090,7 +1090,7 @@ body.cloud-mode #LeftBoard
 #HotModel_RIGHT_Title:hover
 {
 	cursor: pointer;	
-	color:#009688;	
+	color:#767676;	
 }
 
 .HotModelPiece
