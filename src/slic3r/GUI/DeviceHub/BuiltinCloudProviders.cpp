@@ -500,6 +500,34 @@ void ElegooCloudProvider::logout()
     clear_printers();
 }
 
+// The printer's control page is the Monitor tab of an Elegoo (ElegooLink) printer preset, which
+// hosts the printer's own web UI. The generic agent provider fell back to login() here, so a
+// double-click asked for the Elegoo sign-in again and never opened anything.
+void ElegooCloudProvider::open_printer(wxWindow* parent, const std::string& printer_id)
+{
+    // Discovered on this network: its web UI is at its address.
+    const std::string ip = printer_id.rfind("cc2-", 0) == 0 ? printer_id.substr(4) : std::string();
+    if (const PresetBundle* bundle = wxGetApp().preset_bundle; bundle != nullptr) {
+        const DynamicPrintConfig& cfg = bundle->printers.get_edited_preset().config;
+        const auto*               ht  = cfg.option<ConfigOptionEnum<PrintHostType>>("host_type");
+        const bool                has_host = cfg.has("print_host") && !cfg.opt_string("print_host").empty();
+        // An Elegoo preset: its own address, else the one this printer was discovered at.
+        if ((ht != nullptr && ht->value == htElegooLink && (has_host || !ip.empty())) || handles_printer_preset(cfg)) {
+            if (MainFrame* frame = wxGetApp().mainframe; frame != nullptr && frame->open_printer_web_ui(ip))
+                return;
+        }
+    }
+    wxString text = _L("To control this printer here, select your Elegoo printer preset and enter the printer's IP address in "
+                       "its connection settings. Its page then opens on the Device tab.");
+    if (ip.empty()) {
+        MessageDialog(parent, text, display_name(), wxOK | wxICON_INFORMATION).ShowModal();
+        return;
+    }
+    text += "\n\n" + format_wxstr(_L("Open the printer's page (%1%) in your web browser now?"), ip);
+    if (MessageDialog(parent, text, display_name(), wxYES_NO | wxICON_QUESTION).ShowModal() == wxID_YES)
+        wxLaunchDefaultBrowser(wxString::FromUTF8("http://" + ip));
+}
+
 // The account's printers from the last cloud answer, shown while a new one is on its way.
 static std::mutex                s_elegoo_cloud_mutex;
 static std::vector<CloudPrinter> s_elegoo_cloud_printers;
