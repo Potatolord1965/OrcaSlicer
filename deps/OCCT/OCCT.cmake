@@ -30,7 +30,8 @@ if (IN_GIT_REPO)
 endif ()
 
 orcaslicer_add_cmake_project(OCCT
-    URL file:///home/user/src/orca/deps/LOCAL_SRC/OCCT/V8_0_1.zip
+    URL https://github.com/Open-Cascade-SAS/OCCT/archive/refs/tags/V8_0_1.zip
+    URL_HASH SHA256=7c033d917ee8f040c0512d289dcc5f02c148889d5bac17c3e25639accb44f0da
     # Makes BRepMesh triangulate cone faces whose seam pcurve is slightly tilted
     # (Open-Cascade-SAS/OCCT#572); remove the patch once an OCCT release includes the fix.
     PATCH_COMMAND git apply ${OCCT_DIRECTORY_FLAG} --verbose --ignore-space-change --whitespace=fix ${CMAKE_CURRENT_LIST_DIR}/0001-BRepMesh-seam-pcurve-at-edge-parameter.patch

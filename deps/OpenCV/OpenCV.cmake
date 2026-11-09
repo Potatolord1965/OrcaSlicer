@@ -26,7 +26,8 @@ endif ()
 
 orcaslicer_add_cmake_project(OpenCV
     ${_options}
-    URL file:///home/user/src/orca/deps/LOCAL_SRC/OpenCV/4.14.0.tar.gz
+    URL https://github.com/opencv/opencv/archive/refs/tags/4.14.0.tar.gz
+    URL_HASH SHA256=ee8fb9b30eb60850431b4656447080e3737b56e45719c92b67f245950609f86e
     DEPENDS ${JPEG_PKG} ${PNG_PKG}
     CMAKE_ARGS
     -DBUILD_SHARED_LIBS=0

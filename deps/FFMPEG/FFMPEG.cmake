@@ -22,6 +22,7 @@ if (MSVC)
     ExternalProject_Add(dep_FFMPEG
         ${_ffmpeg_depends}
         URL ${PREBUILD_URL_${DEPS_ARCH}}
+        URL_HASH SHA256=${PREBUILD_HASH_${DEPS_ARCH}}
         DOWNLOAD_DIR ${DEP_DOWNLOAD_DIR}/FFMPEG
         CONFIGURE_COMMAND ""
         BUILD_COMMAND ""
@@ -66,7 +67,8 @@ else ()
 
     ExternalProject_Add(dep_FFMPEG
         ${_ffmpeg_depends}
-        URL file:///home/user/src/orca/deps/LOCAL_SRC/FFMPEG/n7.0.3.tar.gz
+        URL https://github.com/FFmpeg/FFmpeg/archive/refs/tags/n7.0.3.tar.gz
+        URL_HASH SHA256=DEEDCABE339165214A3637DF4C86A507AEF0D793CF8774FF68735F4737E8DDBC
         DOWNLOAD_DIR ${DEP_DOWNLOAD_DIR}/FFMPEG
         CONFIGURE_COMMAND ${_ffmpeg_configure_command}
             ${_cross_cmd}
