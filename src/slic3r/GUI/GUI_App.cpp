@@ -1107,9 +1107,12 @@ void GUI_App::post_init()
     hms_query = new HMSQuery();
 
     m_show_gcode_window = app_config->get_bool("show_gcode_window");
-    if (m_networking_need_update) {
+    // Unified Slicer: Bambu Lab support is built in, so the network library is fetched without asking
+    // when it is missing or outdated. A broken install still gets the dialog, which explains the error.
+    if ((m_networking_need_update || !app_config->get_bool("installed_networking")) && !Slic3r::NetworkAgent::get_load_error().has_error)
+        auto_install_network_plugin();
+    else if (m_networking_need_update)
         show_network_plugin_download_dialog(false);
-    }
 
     // Start preset sync after project opened, otherwise we could have preset change during project opening which could cause crash 
     if (app_config->get("sync_user_preset") == "true") {
@@ -5116,6 +5119,34 @@ if (res) {
     } catch (std::exception &) {
         // wxMessageBox(e.what(), "", MB_OK);
     }
+}
+
+void GUI_App::auto_install_network_plugin()
+{
+    static std::atomic<bool> running{false};
+    if (running.exchange(true))
+        return;
+    const std::string configured = app_config->get_network_plugin_version();
+    if (configured.empty() || !is_supported_network_version(configured))
+        app_config->set_network_plugin_version(get_latest_network_version());
+    app_config->set_bool("installed_networking", true);
+    app_config->save();
+    BOOST_LOG_TRIVIAL(info) << "Installing the Bambu network plug-in " << app_config->get_network_plugin_version() << " in the background";
+    std::thread([this]() {
+        int result = download_plugin("plugins", "network_plugin.zip", nullptr, nullptr);
+        if (result >= 0)
+            result = install_plugin("plugins", "network_plugin.zip", nullptr, nullptr);
+        CallAfter([this, result]() {
+            running = false;
+            if (result != 0) {
+                BOOST_LOG_TRIVIAL(error) << "Bambu network plug-in install failed (" << result << ")";
+                return;
+            }
+            m_networking_need_update = false;
+            if (!hot_reload_network_plugin())
+                BOOST_LOG_TRIVIAL(warning) << "Bambu network plug-in installed; it loads on the next start";
+        });
+    }).detach();
 }
 
 void GUI_App::ShowDownNetPluginDlg() {

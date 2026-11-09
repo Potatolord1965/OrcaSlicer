@@ -33,7 +33,7 @@ Set up:
      Markforged printer profiles already select it). In the printer connection dialog put the
      access key as the user name and the secret key as the password (or "ACCESS:SECRET" as the
      API key).
-  3. Optional, in orca_plugins/markforged_eiger_data/settings.json:
+  3. Optional, in orca_plugins/markforged_eiger/markforged_eiger_data/settings.json:
        {"access_key": "...", "secret_key": "...", "settings_preset": "<Eiger preset title or id>"}
      The keys there are used when no Markforged printer preset is selected (the Device tab's
      cloud list). settings_preset slices with that preset instead of the organization default;
