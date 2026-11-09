@@ -702,17 +702,35 @@ void ElegooCloud::set_region(const std::string& region)
     save();
 }
 
-std::string ElegooCloud::login_url(bool dark) const
+std::string ElegooCloud::login_url(bool dark, const std::string& device_id) const
 {
     // The China login page is not published in elegoo-link; it is set by ElegooSlicer's private build
-    // environment. Global accounts sign in on nexprint.com.
+    // environment. Global accounts sign in on nexprint.com. ElegooSlicer passes its device id in the
+    // URL; the page binds the slicer tokens it issues to that device.
     std::string url = LOGIN_GLOBAL;
     url += "?language=en&region=" + std::string(region() == "CN" ? "CN" : "US") + "&theme=" + (dark ? "dark" : "light");
+    if (!device_id.empty())
+        url += "&deviceId=" + Http::url_encode(device_id);
     return url;
+}
+
+std::string ElegooCloud::login_user_agent(bool dark)
+{
+    // The sign-in page issues slicer tokens only to a client that presents itself as ElegooSlicer;
+    // with any other agent it hands back web-session tokens the device API rejects ("not logged in").
+    return std::string("ElegooSlicer/1.5.3.5 (") + (dark ? "dark" : "light") + ") Mozilla/5.0 (Windows NT 10.0; Win64; x64)";
 }
 
 bool ElegooCloud::accept_login_report(const json& params, std::string& error)
 {
+    {
+        // Names only, never values: tells which fields the page sent when a sign-in fails.
+        std::string keys;
+        if (params.is_object())
+            for (auto it = params.begin(); it != params.end(); ++it)
+                keys += (keys.empty() ? "" : ",") + it.key();
+        BOOST_LOG_TRIVIAL(info) << "ElegooCloud: login report fields: " << keys;
+    }
     ElegooCloudAccount a;
     a.region           = region();
     a.user_id          = json_str(find_key(params, {"userId", "accountId"}));

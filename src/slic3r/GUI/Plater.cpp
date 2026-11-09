@@ -21421,6 +21421,24 @@ bool Plater::send_to_vendor(int plate_idx)
         job.layers = std::max(job.layers, int(object->total_layer_count()));
     DynamicPrintConfig full = wxGetApp().preset_bundle->full_config();
     const auto* colours = full.option<ConfigOptionStrings>("filament_colour");
+    // slice_filaments_info is only filled for a plate loaded from a sliced .gcode.3mf. For a plate
+    // sliced here, list the filaments the G-code uses so the dialog can map them to slots.
+    if (job.filaments.empty()) {
+        if (PartPlate* part_plate = get_partplate_list().get_plate(plate); part_plate != nullptr) {
+            if (GCodeProcessorResult* result = part_plate->get_slice_result(); result != nullptr) {
+                const auto* density = full.option<ConfigOptionFloats>("filament_density");
+                for (const auto& [index, volume] : result->print_statistics.total_volumes_per_extruder) {
+                    if (volume <= 0.)
+                        continue;
+                    FilamentInfo f;
+                    f.id = int(index);
+                    if (density != nullptr && index < density->values.size())
+                        f.used_g = float(volume * density->values[index] / 1000.);
+                    job.filaments.push_back(std::move(f));
+                }
+            }
+        }
+    }
     for (FilamentInfo& f : job.filaments) {
         if (f.id < 0)
             continue;
