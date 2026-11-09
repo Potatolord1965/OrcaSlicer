@@ -10,6 +10,8 @@
 #include <wx/string.h>
 
 class wxBitmapButton;
+class wxButton;
+class wxDialog;
 class wxWebView;
 class wxWebViewEvent;
 
@@ -52,6 +54,8 @@ private:
     void     create_toolbar();
     void     update_toolbar();
     void     apply_user_agent();
+    // Thingiverse: loads the web link on the clipboard (a sign-in link from an email) in the pane.
+    void     open_clipboard_link();
 
     void on_webview_event(wxWebViewEvent& evt);
     void on_script_message(const std::string& body);
@@ -79,6 +83,12 @@ private:
     void unlayered_open_from_url(const std::string& id, const nlohmann::json& params);
     void unlayered_install_preset(const std::string& id, const nlohmann::json& params);
     void unlayered_select_preset(const std::string& id, const nlohmann::json& params);
+    // Unlayered account (Unlayered Slicer's account provider protocol, §2 and §6).
+    static bool        is_unlayered_login(const wxString& url);
+    static std::string unlayered_login_next(const wxString& url);
+    void               unlayered_sign_in(const std::string& next);
+    // Loads `next` (a provider path) signed in; `fallback` loads instead when that fails.
+    void               unlayered_web_session(const std::string& next, const wxString& fallback);
 
     std::string m_site;
     wxWebView*  m_browser{nullptr};
@@ -86,6 +96,8 @@ private:
     // Unlayered: per-document bridge token, minted on each load of the trusted origin.
     std::string m_bridge_token;
     bool        m_bridge_busy{false};
+    bool        m_signing_in{false};
+    wxDialog*   m_sign_in_dialog{nullptr};
     // Cleared on destruction; async downloads check it before touching the view.
     std::shared_ptr<bool> m_alive;
 
@@ -93,6 +105,7 @@ private:
     wxBitmapButton* m_back_btn{nullptr};
     wxBitmapButton* m_refresh_btn{nullptr};
     wxBitmapButton* m_open_browser_btn{nullptr};
+    wxButton*       m_open_link_btn{nullptr};
 };
 
 }} // namespace Slic3r::GUI
