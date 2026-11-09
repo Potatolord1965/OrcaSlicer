@@ -347,7 +347,7 @@ bool GLTexture::load_from_svg_files_as_sprites_array(const std::vector<std::stri
     // Icon state ramp for the 3D toolbars (top toolbar, gizmo bar).
     //
     // Upstream drew hover / pressed / selected by leaving the rasterised SVG ALONE, so the
-    // accent path inside each icon -- teal #009688 -- was the entire state signal. The
+    // accent path inside each icon -- teal #767676 -- was the entire state signal. The
     // Unlayered palette bakes that path to a grey (tools/theme/recolor-accent.py: #B8B8B8 in
     // the _dark assets, #5D5D5D in the light ones) that lands within 2/255 of the flat grey
     // the Normal state already flattens the whole icon to, so every state rendered the same

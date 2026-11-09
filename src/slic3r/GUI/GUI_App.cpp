@@ -194,6 +194,7 @@
 #include "3DScene.hpp"
 #include "MainFrame.hpp"
 #include "Plater.hpp"
+#include "OtherSlicerImportDialog.hpp"
 #include "GLCanvas3D.hpp"
 #include "EncodedFilament.hpp"
 #include "GeneratedConfig.hpp"
@@ -483,7 +484,7 @@ public:
         m_bg_color = StateColor::darkModeColorFor(wxColour("#FFFFFF"));
         m_fg_color = StateColor::darkModeColorFor(wxColour("#6B6A6A"));
         m_progress_bg_color = StateColor::darkModeColorFor(wxColour("#DFDFDF"));
-        m_progress_fg_color = StateColor::darkModeColorFor(wxColour("#009688"));
+        m_progress_fg_color = StateColor::darkModeColorFor(wxColour("#767676"));
         m_progress_h = FromDIP(6);
         bool dark_mode = m_fg_color != wxColour("#6B6A6A");
         wxSize sz  = m_window->GetClientSize();
@@ -1106,9 +1107,12 @@ void GUI_App::post_init()
     hms_query = new HMSQuery();
 
     m_show_gcode_window = app_config->get_bool("show_gcode_window");
-    if (m_networking_need_update) {
+    // Unified Slicer: Bambu Lab support is built in, so the network library is fetched without asking
+    // when it is missing or outdated. A broken install still gets the dialog, which explains the error.
+    if ((m_networking_need_update || !app_config->get_bool("installed_networking")) && !Slic3r::NetworkAgent::get_load_error().has_error)
+        auto_install_network_plugin();
+    else if (m_networking_need_update)
         show_network_plugin_download_dialog(false);
-    }
 
     // Start preset sync after project opened, otherwise we could have preset change during project opening which could cause crash 
     if (app_config->get("sync_user_preset") == "true") {
@@ -1140,6 +1144,8 @@ void GUI_App::post_init()
                 this->preset_updater->sync(http_url, language, network_ver, sys_preset ? preset_bundle : nullptr);
             }
 
+            // Presets in other slicers on this computer, offered on the first run and after updates.
+            ask_import_other_slicers_once(*this);
             this->check_new_version_sf();
             if (!cw_showed)
                 this->check_legacy_user_filament_presets(false);
@@ -4693,7 +4699,7 @@ void GUI_App::UpdateDarkUI(wxWindow* window, bool highlited/* = false*/, bool ju
         auto orig_col = window->GetBackgroundColour();
         auto bg_col = StateColor::darkModeColorFor(orig_col);
         // there are cases where the background color of an item is bright, specifically:
-        // * the background color of a button: #009688  -- 73
+        // * the background color of a button: #767676  -- 73
         if (bg_col != orig_col) {
             window->SetBackgroundColour(bg_col);
         }
@@ -5113,6 +5119,34 @@ if (res) {
     } catch (std::exception &) {
         // wxMessageBox(e.what(), "", MB_OK);
     }
+}
+
+void GUI_App::auto_install_network_plugin()
+{
+    static std::atomic<bool> running{false};
+    if (running.exchange(true))
+        return;
+    const std::string configured = app_config->get_network_plugin_version();
+    if (configured.empty() || !is_supported_network_version(configured))
+        app_config->set_network_plugin_version(get_latest_network_version());
+    app_config->set_bool("installed_networking", true);
+    app_config->save();
+    BOOST_LOG_TRIVIAL(info) << "Installing the Bambu network plug-in " << app_config->get_network_plugin_version() << " in the background";
+    std::thread([this]() {
+        int result = download_plugin("plugins", "network_plugin.zip", nullptr, nullptr);
+        if (result >= 0)
+            result = install_plugin("plugins", "network_plugin.zip", nullptr, nullptr);
+        CallAfter([this, result]() {
+            running = false;
+            if (result != 0) {
+                BOOST_LOG_TRIVIAL(error) << "Bambu network plug-in install failed (" << result << ")";
+                return;
+            }
+            m_networking_need_update = false;
+            if (!hot_reload_network_plugin())
+                BOOST_LOG_TRIVIAL(warning) << "Bambu network plug-in installed; it loads on the next start";
+        });
+    }).detach();
 }
 
 void GUI_App::ShowDownNetPluginDlg() {
@@ -7034,7 +7068,7 @@ std::string GUI_App::format_display_version()
 {
     if (!version_display.empty()) return version_display;
 
-    version_display = SoftFever_VERSION;
+    version_display = std::string(UNIFIED_VERSION) + " (Orca " SoftFever_VERSION ")";
     return version_display;
 }
 

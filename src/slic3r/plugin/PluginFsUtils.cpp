@@ -285,6 +285,8 @@ bool version_less(const std::string& a, const std::string& b)
     return parts(a) < parts(b);
 }
 
+// Each bundled plugin gets its own package folder (orca_plugins/<name>/<name>.py): discovery only
+// looks at folders, so a .py left loose in orca_plugins is never loaded.
 void seed_bundled_plugins(const boost::filesystem::path& local_dir)
 {
     namespace fs = boost::filesystem;
@@ -294,16 +296,48 @@ void seed_bundled_plugins(const boost::filesystem::path& local_dir)
         return;
     for (fs::directory_iterator it(bundled, ec), end; !ec && it != end; it.increment(ec)) {
         const fs::path src = it->path();
-        if (!fs::is_regular_file(src, ec) || src.extension() != ".py")
+        boost::system::error_code fec;
+        if (!fs::is_regular_file(src, fec) || src.extension() != ".py")
             continue;
-        const fs::path dst = local_dir / src.filename();
-        if (fs::exists(dst, ec) && !version_less(bundled_plugin_version(dst), bundled_plugin_version(src)))
-            continue;
-        fs::copy_file(src, dst, fs::copy_options::overwrite_existing, ec);
-        if (ec)
-            BOOST_LOG_TRIVIAL(warning) << "Could not install bundled plugin " << src.filename().string() << ": " << ec.message();
-        else
+        const fs::path pkg = local_dir / src.stem();
+        const fs::path dst = pkg / src.filename();
+
+        // Earlier builds copied the file loose into orca_plugins, with its data folder next to it.
+        const fs::path loose = local_dir / src.filename();
+        if (fs::is_regular_file(loose, fec))
+            fs::remove(loose, fec);
+        fs::create_directories(pkg, fec);
+        const fs::path loose_data = local_dir / (src.stem().string() + "_data");
+        const fs::path pkg_data   = pkg / (src.stem().string() + "_data");
+        if (fs::is_directory(loose_data, fec) && !fs::exists(pkg_data, fec))
+            fs::rename(loose_data, pkg_data, fec);
+
+        if (!fs::exists(dst, fec) || version_less(bundled_plugin_version(dst), bundled_plugin_version(src))) {
+            fs::copy_file(src, dst, fs::copy_options::overwrite_existing, fec);
+            if (fec) {
+                BOOST_LOG_TRIVIAL(warning) << "Could not install bundled plugin " << src.filename().string() << ": " << fec.message();
+                continue;
+            }
             BOOST_LOG_TRIVIAL(info) << "Installed bundled plugin " << src.filename().string();
+        }
+
+        // Built in: enabled, and trusted like the app itself, so it loads without permission prompts.
+        if (!fs::exists(pkg / INSTALL_STATE_FILE, fec)) {
+            PluginDescriptor descriptor;
+            descriptor.plugin_root = pkg.string();
+            std::string meta_error;
+            if (!read_python_plugin_metadata(dst, descriptor, meta_error)) {
+                BOOST_LOG_TRIVIAL(warning) << "Bundled plugin " << src.filename().string() << " has bad metadata: " << meta_error;
+                continue;
+            }
+            PluginInstallState state;
+            seed_install_metadata(state, descriptor);
+            state.enabled                 = true;
+            state.permissions.full_access = true;
+            std::lock_guard<std::mutex> lock(install_state_mutex());
+            if (!write_install_state(pkg, state))
+                BOOST_LOG_TRIVIAL(warning) << "Could not enable bundled plugin " << src.filename().string();
+        }
     }
 }
 } // namespace

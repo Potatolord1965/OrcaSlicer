@@ -101,7 +101,10 @@ class MarkforgedCloudProvider : public PrinterAgentCloudProvider
 public:
     MarkforgedCloudProvider();
 
-    bool is_logged_in() const override;
+    // Signing in only needs the Eiger API, not the agent plug-in.
+    bool     is_available() const override { return true; }
+    wxString account_name() const override;
+    bool     is_logged_in() const override;
     void login(wxWindow* parent) override;
     void logout() override;
 };
@@ -120,6 +123,7 @@ public:
     void     logout() override;
 
     void refresh_printers(PrintersCallback done) override;
+    void open_printer(wxWindow* parent, const std::string& printer_id) override;
 };
 
 }} // namespace Slic3r::GUI

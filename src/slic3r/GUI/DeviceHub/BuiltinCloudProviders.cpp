@@ -27,7 +27,11 @@
 #include "slic3r/GUI/MsgDialog.hpp"
 #include "slic3r/Utils/CloudProvider.hpp"
 #include "slic3r/Utils/ElegooCloud.hpp"
+#include "slic3r/Utils/MarkforgedEiger.hpp"
 #include "slic3r/GUI/ElegooLoginDialog.hpp"
+#include <wx/utils.h>
+#include <atomic>
+#include <mutex>
 #include <thread>
 #include "slic3r/Utils/ICloudServiceAgent.hpp"
 #include "slic3r/Utils/IPrinterAgent.hpp"
@@ -125,6 +129,10 @@ void BambuCloudProvider::refresh_printers(PrintersCallback done)
 
     for (const auto& [dev_id, obj] : machines) {
         if (obj == nullptr)
+            continue;
+        // The Elegoo CC2 LAN plugin announces its printers through the same discovery list
+        // ("cc2-<ip>"); they belong to the Elegoo account, not Bambu Lab.
+        if (dev_id.rfind("cc2-", 0) == 0)
             continue;
         CloudPrinter p;
         p.provider_id = id();
@@ -359,7 +367,8 @@ namespace {
 // Written by the Markforged thread's agent plug-in; other keys in it belong to the plug-in.
 boost::filesystem::path markforged_settings_path()
 {
-    return boost::filesystem::path(data_dir()) / "orca_plugins" / "markforged_eiger_data" / "settings.json";
+    // The plug-in keeps its data next to itself, in its package folder (see seed_bundled_plugins).
+    return boost::filesystem::path(data_dir()) / "orca_plugins" / "markforged_eiger" / "markforged_eiger_data" / "settings.json";
 }
 
 nlohmann::json read_markforged_settings()
@@ -429,6 +438,15 @@ void MarkforgedCloudProvider::login(wxWindow* parent)
     if (access_key.empty() || secret_key.empty())
         return;
 
+    // Check the keys before keeping them, so a typo shows up here and not as an empty printer list.
+    try {
+        wxBusyCursor busy;
+        Eiger({access_key, secret_key}).devices();
+    } catch (const std::exception& e) {
+        MessageDialog(parent, wxString::FromUTF8(e.what()), display_name(), wxOK | wxICON_ERROR).ShowModal();
+        return;
+    }
+
     // Merge: the plug-in keeps its own settings in the same file.
     nlohmann::json settings = read_markforged_settings();
     if (!settings.is_object())
@@ -438,6 +456,15 @@ void MarkforgedCloudProvider::login(wxWindow* parent)
     if (!write_markforged_settings(settings))
         MessageDialog(parent, _L("The API keys could not be saved."), display_name(), wxOK | wxICON_ERROR).ShowModal();
     clear_printers();
+}
+
+wxString MarkforgedCloudProvider::account_name() const
+{
+    const std::string key = read_markforged_settings().value("access_key", std::string());
+    if (key.empty())
+        return {};
+    // TRN %1% is the last characters of an Eiger API access key.
+    return format_wxstr(_L("API key …%1%"), key.size() > 4 ? key.substr(key.size() - 4) : key);
 }
 
 void MarkforgedCloudProvider::logout()
@@ -474,6 +501,54 @@ void ElegooCloudProvider::logout()
     clear_printers();
 }
 
+// The printer's control page is the Monitor tab of an Elegoo (ElegooLink) printer preset, which
+// hosts the printer's own web UI. The generic agent provider fell back to login() here, so a
+// double-click asked for the Elegoo sign-in again and never opened anything.
+void ElegooCloudProvider::open_printer(wxWindow* parent, const std::string& printer_id)
+{
+    // Discovered on this network: its web UI is at its address.
+    const std::string ip = printer_id.rfind("cc2-", 0) == 0 ? printer_id.substr(4) : std::string();
+    if (const PresetBundle* bundle = wxGetApp().preset_bundle; bundle != nullptr) {
+        const DynamicPrintConfig& cfg = bundle->printers.get_edited_preset().config;
+        const auto*               ht  = cfg.option<ConfigOptionEnum<PrintHostType>>("host_type");
+        const bool                has_host = cfg.has("print_host") && !cfg.opt_string("print_host").empty();
+        // An Elegoo preset: its own address, else the one this printer was discovered at.
+        if ((ht != nullptr && ht->value == htElegooLink && (has_host || !ip.empty())) || handles_printer_preset(cfg)) {
+            if (MainFrame* frame = wxGetApp().mainframe; frame != nullptr && frame->open_printer_web_ui(ip))
+                return;
+        }
+    }
+    wxString text = _L("To control this printer here, select your Elegoo printer preset and enter the printer's IP address in "
+                       "its connection settings. Its page then opens on the Device tab.");
+    if (ip.empty()) {
+        MessageDialog(parent, text, display_name(), wxOK | wxICON_INFORMATION).ShowModal();
+        return;
+    }
+    text += "\n\n" + format_wxstr(_L("Open the printer's page (%1%) in your web browser now?"), ip);
+    if (MessageDialog(parent, text, display_name(), wxYES_NO | wxICON_QUESTION).ShowModal() == wxID_YES)
+        wxLaunchDefaultBrowser(wxString::FromUTF8("http://" + ip));
+}
+
+// The account's printers from the last cloud answer, shown while a new one is on its way.
+static std::mutex                s_elegoo_cloud_mutex;
+static std::vector<CloudPrinter> s_elegoo_cloud_printers;
+// One account fetch at a time: the page polls every few seconds, and on a slow connection a
+// fetch outlasts that; overlapping fetches would pile up and could answer out of order.
+static std::atomic<bool>         s_elegoo_cloud_fetching{false};
+
+static std::vector<CloudPrinter> merge_lan(std::vector<CloudPrinter> out, const std::vector<CloudPrinter>& lan)
+{
+    // A LAN printer the account also lists shows once (the cloud entry, keyed by serial).
+    for (const CloudPrinter& p : lan) {
+        bool dup = false;
+        for (const CloudPrinter& c : out)
+            if (c.id == p.id) { dup = true; break; }
+        if (!dup)
+            out.push_back(p);
+    }
+    return out;
+}
+
 void ElegooCloudProvider::refresh_printers(PrintersCallback done)
 {
     // Printers on the local network, from the LAN agent.
@@ -483,35 +558,51 @@ void ElegooCloudProvider::refresh_printers(PrintersCallback done)
         done(std::move(lan), {});
         return;
     }
+    // Show the LAN printers (and the last known cloud ones) right away: the cloud call can take
+    // up to a connect timeout per request when the internet is slow or down.
+    {
+        std::lock_guard<std::mutex> lock(s_elegoo_cloud_mutex);
+        done(merge_lan(s_elegoo_cloud_printers, lan), {});
+    }
+    if (s_elegoo_cloud_fetching.exchange(true))
+        return; // the fetch in flight answers with fresh data
     // The account's printers: blocking HTTPS, so off the GUI thread (the caller marshals the callback).
     const std::string provider = id();
-    std::thread([done, lan = std::move(lan), provider]() mutable {
+    std::thread([done, lan = std::move(lan), provider]() {
         std::vector<CloudPrinter> out;
         wxString                  error;
         try {
             for (const ElegooCloudPrinter& p : ElegooCloud::instance().printers()) {
+                // The device list carries no status; the report data does (1 idle, 2 printing).
+                const int    state = ElegooCloud::instance().printer_state(p.serial);
                 CloudPrinter cp;
                 cp.provider_id = provider;
                 cp.id          = p.serial;
                 cp.name        = wxString::FromUTF8(p.name.empty() ? p.serial : p.name);
                 cp.model       = wxString::FromUTF8(p.model);
-                cp.online      = p.state >= 0;
-                cp.status      = p.state == 2 ? _L("Printing") : p.state == 1 ? _L("Idle") : _L("Unknown");
+                cp.online      = state >= 0;
+                cp.status      = state == 2 ? _L("Printing") : state == 1 ? _L("Idle") : _L("Unknown");
                 out.push_back(std::move(cp));
             }
-        } catch (const std::exception& ex) {
+            std::lock_guard<std::mutex> lock(s_elegoo_cloud_mutex);
+            s_elegoo_cloud_printers = out;
+        } catch (const ElegooAuthError& ex) {
             error = wxString::FromUTF8(ex.what());
+            std::lock_guard<std::mutex> lock(s_elegoo_cloud_mutex);
+            s_elegoo_cloud_printers.clear();
+        } catch (const std::exception& ex) {
+            // Offline or the cloud is slow: keep the last known account printers, marked unreachable.
+            error = _L("Could not reach the Elegoo cloud. Check the internet connection; printers on this network still work.") +
+                    "\n" + wxString::FromUTF8(ex.what());
+            std::lock_guard<std::mutex> lock(s_elegoo_cloud_mutex);
+            out = s_elegoo_cloud_printers;
+            for (CloudPrinter& c : out) {
+                c.online = false;
+                c.status = _L("Unknown");
+            }
         }
-        // A LAN printer the account also lists shows once (the cloud entry, keyed by serial).
-        for (CloudPrinter& p : lan) {
-            bool dup = false;
-            for (const CloudPrinter& c : out)
-                if (c.id == p.id) { dup = true; break; }
-            if (!dup)
-                out.push_back(std::move(p));
-        }
-        done(std::move(out), error);
+        s_elegoo_cloud_fetching = false;
+        done(merge_lan(std::move(out), lan), error);
     }).detach();
 }
-
 }} // namespace Slic3r::GUI

@@ -19,7 +19,6 @@
 #include "libslic3r/Preset.hpp"
 #include "libslic3r/PresetBundle.hpp"
 #include "libslic3r/PrintConfig.hpp"
-#include "slic3r/GUI/DeviceHub/DeviceHubPanel.hpp"
 #include "slic3r/GUI/GUI.hpp"
 #include "slic3r/GUI/GUI_App.hpp"
 #include "slic3r/GUI/I18N.hpp"
@@ -242,9 +241,8 @@ void LocalPrintersProvider::open_printer(wxWindow* parent, const std::string& pr
         return;
     wxGetApp().CallAfter([]() {
         if (MainFrame* frame = wxGetApp().mainframe)
-            if (DeviceHubPanel* hub = frame->device_hub())
-                if (!hub->select(DeviceHubPanel::PAGE_WEB))
-                    hub->select(DeviceHubPanel::PAGE_PRINTER);
+            if (!frame->open_printer_web_ui())
+                frame->jump_to_monitor();
     });
 }
 

@@ -10,7 +10,10 @@
 #include <ctime>
 #include <exception>
 #include <fstream>
+#include <iterator>
 #include <memory>
+#include <stdexcept>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -26,6 +29,16 @@
 #include <openssl/evp.h>
 #include <openssl/hmac.h>
 #include <zlib.h>
+
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#include <wincrypt.h>
+#else
+#include <sys/stat.h>
+#endif
 
 namespace Slic3r { namespace CrealityCloud {
 
@@ -172,6 +185,46 @@ float number(const json& values, const char* key, float fallback = 0.f)
     return fallback;
 }
 
+// The saved session holds the account token. On Windows it is encrypted for the current user
+// (DPAPI, like the Elegoo sign-in); elsewhere the file is readable by its owner only.
+// Throws on failure.
+#ifdef _WIN32
+std::string dpapi(const std::string& in, bool protect)
+{
+    DATA_BLOB src{static_cast<DWORD>(in.size()), reinterpret_cast<BYTE*>(const_cast<char*>(in.data()))};
+    DATA_BLOB dst{0, nullptr};
+    const BOOL ok = protect ? CryptProtectData(&src, L"Creality Cloud", nullptr, nullptr, nullptr, 0, &dst) :
+                              CryptUnprotectData(&src, nullptr, nullptr, nullptr, nullptr, 0, &dst);
+    if (!ok)
+        throw std::runtime_error("DPAPI error " + std::to_string(GetLastError()));
+    std::string out(reinterpret_cast<const char*>(dst.pbData), dst.cbData);
+    LocalFree(dst.pbData);
+    return out;
+}
+#endif
+
+std::string protect_session(const std::string& text)
+{
+#ifdef _WIN32
+    return dpapi(text, true);
+#else
+    return text;
+#endif
+}
+
+// Sessions saved by earlier builds are plain JSON; they are read as they are and protected on the next save.
+std::string unprotect_session(const std::string& data)
+{
+    const size_t first = data.find_first_not_of(" \t\r\n");
+    if (first == std::string::npos || data[first] == '{')
+        return data;
+#ifdef _WIN32
+    return dpapi(data, false);
+#else
+    return data;
+#endif
+}
+
 std::mutex  s_session_mutex;
 bool        s_session_loaded = false;
 Session     s_session;
@@ -216,10 +269,11 @@ void SessionStore::load_locked()
         return;
     s_session_loaded = true;
     try {
-        boost::nowide::ifstream in(session_file_locked());
+        boost::nowide::ifstream in(session_file_locked(), std::ios::binary);
         if (!in)
             return;
-        const json j = json::parse(in, nullptr, false);
+        const std::string data((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        const json        j = json::parse(unprotect_session(data), nullptr, false);
         if (!j.is_object())
             return;
         s_session.user_id  = json_string(j, "user_id");
@@ -243,8 +297,15 @@ void SessionStore::save_locked()
     j["region"]     = region_to_string(s_session.region);
     j["device_uid"] = s_device_uid;
     try {
-        boost::nowide::ofstream out(session_file_locked(), std::ios::out | std::ios::trunc);
-        out << j.dump(4);
+        const std::string data = protect_session(j.dump(4));
+        const std::string file = session_file_locked();
+        {
+            boost::nowide::ofstream out(file, std::ios::out | std::ios::binary | std::ios::trunc);
+            out.write(data.data(), data.size());
+        }
+#ifndef _WIN32
+        ::chmod(file.c_str(), 0600);
+#endif
     } catch (const std::exception& e) {
         BOOST_LOG_TRIVIAL(warning) << "CrealityCloud: could not save the session: " << e.what();
     }

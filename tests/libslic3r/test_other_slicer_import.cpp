@@ -237,6 +237,22 @@ TEST_CASE("An OrcaSlicer data directory is scanned for the person's own presets 
     CHECK(c.processes == 1);
 }
 
+TEST_CASE("Unlayered Slicer is read like OrcaSlicer, from its own data folder", "[OtherSlicerImport]")
+{
+    const AppInfo &info = app_info(App::UnlayeredSlicer);
+    CHECK(info.name == "Unlayered Slicer");
+    CHECK_FALSE(info.prusa_format);
+    CHECK(info.folders == std::vector<std::string>{"Unlayered Slicer"});
+    CHECK(info.conf == "Unlayered Slicer.conf");
+
+    TempTree t;
+    make_orca(t.path);
+    const Scan s = scan(location_at(App::UnlayeredSlicer, t.path));
+    CHECK(s.presets.size() == 3);
+    for (const SourcePreset &p : s.presets)
+        CHECK(p.app == App::UnlayeredSlicer);
+}
+
 TEST_CASE("A preset is flattened through its parents in the app it came from", "[OtherSlicerImport]")
 {
     TempTree t;

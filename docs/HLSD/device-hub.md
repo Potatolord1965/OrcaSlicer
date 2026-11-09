@@ -88,5 +88,5 @@ rather than disappearing, so the rail stays the same from one start to the next.
   Offline from a TCP connect to the host (on a worker thread, one probe run at a time), and USB
   serial devices (`scan_serial_ports_extended()`, ports with a USB VID/PID). There is no account:
   "Add printer" opens the Connection dialog (`PhysicalPrinterDialog`) for the selected preset.
-  Opening a network printer selects its preset and shows its Web UI page; the app can't print over
+  Opening a network printer selects its preset and opens its Web UI page; the app can't print over
   USB, so opening a USB device explains the alternatives.

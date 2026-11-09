@@ -808,7 +808,7 @@ void GLGizmoSkeleton::render_cut_plane_input_window(CutConnectors& connectors, f
             ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding,   3.f * scale);
             ImGui::PushStyleVar(ImGuiStyleVar_FramePadding,    ImVec2(4.f * scale, 4.f * scale));
             // UNLAYERED_MOD — these were hardcoded: pure-white text, and the pre-grayscale teal
-            // #009687 for the active fill. Both are float literals, so the accent-colour pass that
+            // #767676 for the active fill. Both are float literals, so the accent-colour pass that
             // recoloured the hex strings walked straight past them. White text over the light
             // theme's white window made the INACTIVE tool icons invisible, the same failure as the
             // white-on-white tick. Take the text colour from the window and tint the active fill

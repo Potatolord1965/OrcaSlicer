@@ -30,7 +30,15 @@ namespace Slic3r {
 class ElegooCloudError : public std::runtime_error
 {
 public:
-    explicit ElegooCloudError(const std::string& what) : std::runtime_error(what) {}
+    explicit ElegooCloudError(const std::string& what, int api_code = 0) : std::runtime_error(what), api_code(api_code) {}
+    int api_code; // the API's own "code" when it answered with one, else 0 (network or parse failure)
+};
+
+// The cloud no longer accepts the saved sign-in (expired, revoked, or replaced by a newer login).
+class ElegooAuthError : public ElegooCloudError
+{
+public:
+    explicit ElegooAuthError(const std::string& what) : ElegooCloudError(what) {}
 };
 
 struct ElegooCloudAccount
@@ -107,7 +115,8 @@ public:
     void               set_region(const std::string& region);
 
     // Login page of the Elegoo account site; it reports the tokens back over the WebView bridge.
-    std::string login_url(bool dark) const;
+    std::string        login_url(bool dark, const std::string& device_id) const;
+    static std::string login_user_agent(bool dark);
     // Fills the account from the tokens a login page reported ("report.userInfo" params).
     bool accept_login_report(const nlohmann::json& params, std::string& error);
 
@@ -133,6 +142,9 @@ private:
     nlohmann::json call(const std::string& method, const std::string& path, const nlohmann::json* body = nullptr);
     void           ensure_token();
     void           refresh();
+    void           sign_out_if_unchanged(const std::string& access_token);
+    // Checks the sign-in and fills in the nickname and email from the account profile.
+    void           load_profile();
     void           load();
     void           save() const;
     std::string    upload_to_storage(const std::string& server_name, const boost::filesystem::path& file,
@@ -140,6 +152,8 @@ private:
     nlohmann::json file_detail(const std::string& serial, const std::string& filename);
 
     mutable std::recursive_mutex m_mutex;
+    // Serializes token refreshes; m_mutex is never held across a network call.
+    std::mutex m_refresh_mutex;
     ElegooCloudAccount           m_account;
     // One RTM session per account at a time: the cloud allows a single messaging login.
     std::mutex m_rtm_mutex;

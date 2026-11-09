@@ -95,6 +95,7 @@
 #include "I18N.hpp"
 #include "GLCanvas3D.hpp"
 #include "Plater.hpp"
+#include "OtherSlicerImportDialog.hpp"
 #ifdef SLIC3R_CAD
 #include "slic3r/GUI/CAD/DesignPanel.hpp"
 #include "slic3r/GUI/CAD/McpControl.hpp"
@@ -2604,7 +2605,7 @@ void MainFrame::update_side_button_style()
     StateColor m_btn_bg_enable = StateColor(
         std::pair<wxColour, int>(wxColour(0, 137, 123), StateColor::Pressed),
         std::pair<wxColour, int>(wxColour(48, 221, 112), StateColor::Hovered),
-        std::pair<wxColour, int>(wxColour(0, 150, 136), StateColor::Normal)
+        std::pair<wxColour, int>(wxColour(118, 118, 118), StateColor::Normal)
     );
 
     // m_publish_btn->SetMinSize(wxSize(FromDIP(125), FromDIP(24)));
@@ -3060,6 +3061,10 @@ void MainFrame::init_menubar_as_editor()
             [this]() { return can_add_models(); });
         append_menu_item(import_menu, wxID_ANY, _L("Import Configs") + dots /*+ "\t" + ctrl + "I"*/, _L("Load configs"),
             [this](wxCommandEvent&) { load_config_file(); }, "menu_import", nullptr,
+            [](){return true; }, this);
+        append_menu_item(import_menu, wxID_ANY, _L("Import Settings from Other Slicers") + dots,
+            _L("Import your printer, filament and process presets from OrcaSlicer, Bambu Studio, PrusaSlicer and other slicers"),
+            [this](wxCommandEvent&) { OtherSlicerImportDialog::run(this); }, "menu_import", nullptr,
             [](){return true; }, this);
 
         append_submenu(fileMenu, import_menu, wxID_ANY, _L("Import"), "");
@@ -4581,6 +4586,23 @@ void MainFrame::load_printer_url(wxString url, wxString apikey)
     evt->SetString(url);
     evt->SetAPIkey(apikey);
     wxQueueEvent(this, evt);
+}
+
+bool MainFrame::open_printer_web_ui(const std::string& host)
+{
+    m_tabpanel->SelectPageByName(TAB_ID_MONITOR);
+    if (!m_device_hub->select(DeviceHubPanel::PAGE_WEB))
+        return false;
+    DynamicPrintConfig cfg = wxGetApp().preset_bundle->printers.get_edited_preset().config;
+    if (!host.empty() && cfg.opt_string("print_host").empty()) {
+        cfg.opt_string("print_host") = host;
+        const wxString url = from_u8(PrintHost::get_print_host_webui(&cfg));
+        if (!url.empty())
+            load_printer_url(url, wxString());
+    } else {
+        load_printer_url();
+    }
+    return true;
 }
 
 void MainFrame::load_printer_url()

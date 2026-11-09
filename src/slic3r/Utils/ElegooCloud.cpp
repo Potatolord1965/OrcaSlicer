@@ -45,7 +45,9 @@ constexpr const char* API_GLOBAL      = "https://matrix.elegoo.com";
 constexpr const char* API_CHINA       = "https://matrix.elegoo.com.cn";
 constexpr const char* LOGIN_GLOBAL    = "https://www.nexprint.com/account/slicer-login";
 constexpr const char* AGORA_APP_ID    = "d035320941e34cd5bc4ec106eff05580"; // public, from elegoo-link
-constexpr const char* ELEGOO_LINK_RAW = "https://raw.githubusercontent.com/ELEGOO-3D/elegoo-link/main/thirdparty/agora";
+// Pinned to one elegoo-link commit; each downloaded library is checked against its SHA-256 below.
+constexpr const char* ELEGOO_LINK_RAW =
+    "https://raw.githubusercontent.com/ELEGOO-3D/elegoo-link/ec2d2269b588608a1b9ccb4ff9627ddb758ea482/thirdparty/agora";
 
 constexpr int M_START_PRINT       = 1020;
 constexpr int M_DOWNLOAD_FILE     = 1057;
@@ -312,10 +314,59 @@ constexpr const char* AGORA_MAIN = "libagora_rtm_sdk.so";
 constexpr const char* AGORA_AOSL = "libaosl.so";
 #endif
 
+struct AgoraFile
+{
+    const char* name;
+    const char* rel;    // path under ELEGOO_LINK_RAW
+    const char* sha256; // of that file at the pinned commit
+};
+
+// Libraries the app downloads itself when ElegooSlicer is not installed. Empty on macOS.
+std::vector<AgoraFile> agora_download_files()
+{
+#ifdef _WIN32
+    return {{"agora_rtm_sdk.dll", "windows/lib/x86_64/agora_rtm_sdk.dll", "c4010a47a49cbfe221f03369799c553384a7930b7bdf90f0155448f21e6f7663"},
+            {"libaosl.dll", "windows/lib/x86_64/libaosl.dll", "bbeb859a2f3a57532d13e3958c4d1df8db19d8d54192c3ab58b0488a791370ce"}};
+#elif defined(__linux__)
+    return {{"libagora_rtm_sdk.so", "linux/libagora_rtm_sdk.so", "bbe416e6a7622878f1f3434cea6cfc11e5e56ca88d3eab5eec17d2a21a01acf5"},
+            {"libaosl.so", "linux/libaosl.so", "82207380ac7f98e5cbde5bfdf4910f6e625ec606c876b00b1dd8bb5589aa6ba4"}};
+#else
+    return {};
+#endif
+}
+
+std::string sha256_hex(const std::string& data)
+{
+    unsigned char digest[EVP_MAX_MD_SIZE];
+    unsigned int  len = 0;
+    EVP_Digest(data.data(), data.size(), digest, &len, EVP_sha256(), nullptr);
+    return to_hex(std::string(reinterpret_cast<const char*>(digest), len));
+}
+
+// The app's own download folder holds only libraries it fetched; load them only while they
+// still match the pinned hashes (a copy from an older build, or one changed on disk, is fetched again).
+bool downloaded_agora_ok(const fs::path& dir)
+{
+    const std::vector<AgoraFile> files = agora_download_files();
+    if (files.empty())
+        return false;
+    boost::system::error_code ec;
+    for (const AgoraFile& f : files)
+        if (!fs::exists(dir / f.name, ec) || sha256_hex(read_file(dir / f.name)) != f.sha256)
+            return false;
+    return true;
+}
+
 fs::path find_agora_dir()
 {
     boost::system::error_code ec;
+    const fs::path            own = ElegooCloud::data_folder() / "agora";
     for (const fs::path& d : agora_candidate_dirs()) {
+        if (d == own) {
+            if (downloaded_agora_ok(d))
+                return d;
+            continue;
+        }
         if (fs::exists(d / AGORA_MAIN, ec))
             return d;
         if (!fs::is_directory(d, ec))
@@ -329,30 +380,27 @@ fs::path find_agora_dir()
 
 fs::path download_agora_libs(const ElegooProgressFn& progress)
 {
-    std::vector<std::pair<std::string, std::string>> files;
-#ifdef _WIN32
-    files = {{"agora_rtm_sdk.dll", "windows/lib/x86_64/agora_rtm_sdk.dll"}, {"libaosl.dll", "windows/lib/x86_64/libaosl.dll"}};
-#elif defined(__linux__)
-    files = {{"libagora_rtm_sdk.so", "linux/libagora_rtm_sdk.so"}, {"libaosl.so", "linux/libaosl.so"}};
-#else
-    throw ElegooCloudError(_u8L("The Elegoo messaging library was not found. Install ElegooSlicer once so it can be loaded from there."));
-#endif
+    const std::vector<AgoraFile> files = agora_download_files();
+    if (files.empty())
+        throw ElegooCloudError(_u8L("The Elegoo messaging library was not found. Install ElegooSlicer once so it can be loaded from there."));
     const fs::path target = ElegooCloud::data_folder() / "agora";
     fs::create_directories(target);
-    for (const auto& [name, rel] : files) {
+    for (const AgoraFile& f : files) {
         if (progress)
             progress(50, _u8L("Downloading the Elegoo messaging library…"));
         std::string error;
         std::string body;
-        Http::get(std::string(ELEGOO_LINK_RAW) + "/" + rel)
+        Http::get(std::string(ELEGOO_LINK_RAW) + "/" + f.rel)
             .header("User-Agent", ElegooCloud::user_agent())
             .timeout_max(300)
             .on_complete([&](std::string b, unsigned) { body = std::move(b); })
             .on_error([&](std::string, std::string err, unsigned status) { error = err + " (HTTP " + std::to_string(status) + ")"; })
             .perform_sync();
         if (!error.empty() || body.empty())
-            throw ElegooCloudError("Downloading " + name + " failed: " + error);
-        write_file(target / name, body);
+            throw ElegooCloudError(std::string("Downloading ") + f.name + " failed: " + error);
+        if (sha256_hex(body) != f.sha256)
+            throw ElegooCloudError(std::string("The downloaded ") + f.name + " does not match the expected checksum; it was not used.");
+        write_file(target / f.name, body);
     }
     return target;
 }
@@ -702,17 +750,35 @@ void ElegooCloud::set_region(const std::string& region)
     save();
 }
 
-std::string ElegooCloud::login_url(bool dark) const
+std::string ElegooCloud::login_url(bool dark, const std::string& device_id) const
 {
     // The China login page is not published in elegoo-link; it is set by ElegooSlicer's private build
-    // environment. Global accounts sign in on nexprint.com.
+    // environment. Global accounts sign in on nexprint.com. ElegooSlicer passes its device id in the
+    // URL; the page binds the slicer tokens it issues to that device.
     std::string url = LOGIN_GLOBAL;
     url += "?language=en&region=" + std::string(region() == "CN" ? "CN" : "US") + "&theme=" + (dark ? "dark" : "light");
+    if (!device_id.empty())
+        url += "&deviceId=" + Http::url_encode(device_id);
     return url;
+}
+
+std::string ElegooCloud::login_user_agent(bool dark)
+{
+    // The sign-in page issues slicer tokens only to a client that presents itself as ElegooSlicer;
+    // with any other agent it hands back web-session tokens the device API rejects ("not logged in").
+    return std::string("ElegooSlicer/1.5.3.5 (") + (dark ? "dark" : "light") + ") Mozilla/5.0 (Windows NT 10.0; Win64; x64)";
 }
 
 bool ElegooCloud::accept_login_report(const json& params, std::string& error)
 {
+    {
+        // Names only, never values: tells which fields the page sent when a sign-in fails.
+        std::string keys;
+        if (params.is_object())
+            for (auto it = params.begin(); it != params.end(); ++it)
+                keys += (keys.empty() ? "" : ",") + it.key();
+        BOOST_LOG_TRIVIAL(info) << "ElegooCloud: login report fields: " << keys;
+    }
     ElegooCloudAccount a;
     a.region           = region();
     a.user_id          = json_str(find_key(params, {"userId", "accountId"}));
@@ -728,7 +794,30 @@ bool ElegooCloud::accept_login_report(const json& params, std::string& error)
     }
     set_account(a);
     BOOST_LOG_TRIVIAL(info) << "ElegooCloud: signed in as " << mask(a.user_id);
+    try {
+        load_profile();
+    } catch (const ElegooAuthError& e) {
+        sign_out();
+        error = e.what();
+        return false;
+    } catch (const ElegooCloudError& e) { // offline: keep the sign-in, the name fills in later
+        BOOST_LOG_TRIVIAL(warning) << "ElegooCloud: profile not loaded: " << e.what();
+    }
     return true;
+}
+
+void ElegooCloud::load_profile()
+{
+    const json d = request("GET", "/api/v1/account-center-server/account-info/account", nullptr, true).value("data", json::object());
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    auto set_if = [&](std::string& field, const char* key) {
+        if (d.contains(key) && d[key].is_string() && !d[key].get<std::string>().empty())
+            field = d[key].get<std::string>();
+    };
+    set_if(m_account.nickname, "nickname");
+    set_if(m_account.email, "email");
+    set_if(m_account.avatar, "avatarUrl");
+    save();
 }
 
 #ifdef _WIN32
@@ -766,6 +855,14 @@ bool ElegooCloud::import_from_elegooslicer(std::string& error)
             return false;
         }
         set_account(a);
+        // ElegooSlicer renews its tokens on its own, which retires older copies; check this one works.
+        try {
+            load_profile();
+        } catch (const ElegooAuthError&) {
+            sign_out();
+            error = _u8L("The sign-in ElegooSlicer saved is no longer valid. Sign in with the Elegoo page instead.");
+            return false;
+        }
         return true;
     } catch (const std::exception& e) {
         error = e.what();
@@ -843,17 +940,22 @@ json ElegooCloud::request(const std::string& method, const std::string& path, co
         .perform_sync();
     const std::string short_path = path.substr(0, path.find('?'));
     if (status == 401 || status == 403)
-        throw ElegooCloudError(_u8L("Elegoo rejected the sign-in. Sign in to your Elegoo account again."));
+        throw ElegooAuthError(_u8L("Elegoo rejected the sign-in. Sign in to your Elegoo account again."));
     if (!error.empty())
         throw ElegooCloudError("Elegoo API " + method + " " + short_path + " failed: " + error + " " + reply.substr(0, 200));
     const json j = json::parse(reply, nullptr, false);
     if (!j.is_object())
         throw ElegooCloudError("Unexpected reply from the Elegoo API for " + short_path);
-    const int code = j.value("code", -1);
-    if (code == 401 || code == 403)
-        throw ElegooCloudError(_u8L("Elegoo rejected the sign-in. Sign in to your Elegoo account again."));
+    // The API answers HTTP 200 with its own code; the text is in "msg" (older replies: "message").
+    const int         code = j.value("code", -1);
+    const std::string text = j.contains("msg") && j["msg"].is_string() ? j["msg"].get<std::string>() : j.value("message", "");
     if (code != 0)
-        throw ElegooCloudError("Elegoo API " + short_path + ": code " + std::to_string(code) + " " + j.value("message", ""));
+        BOOST_LOG_TRIVIAL(warning) << "ElegooCloud: " << method << " " << short_path << " -> code " << code
+                                   << (text.empty() ? "" : " (" + text + ")");
+    if (code == 401 || code == 403)
+        throw ElegooAuthError(_u8L("Elegoo rejected the sign-in. Sign in to your Elegoo account again."));
+    if (code != 0)
+        throw ElegooCloudError("Elegoo API " + short_path + ": code " + std::to_string(code) + (text.empty() ? "" : " " + text), code);
     return j;
 }
 
@@ -862,10 +964,13 @@ json ElegooCloud::call(const std::string& method, const std::string& path, const
     ensure_token();
     try {
         return request(method, path, body, true);
-    } catch (const ElegooCloudError&) {
-        // One retry with a refreshed token: the access token may have been revoked early.
-        if (account().refresh_token.empty())
+    } catch (const ElegooAuthError&) {
+        // One retry with a refreshed token, only when the sign-in itself was rejected: the access
+        // token may have been revoked early. Other errors are not fixed by a new token.
+        if (account().refresh_token.empty()) {
+            sign_out();
             throw;
+        }
         refresh();
         return request(method, path, body, true);
     }
@@ -887,14 +992,36 @@ void ElegooCloud::ensure_token()
 
 void ElegooCloud::refresh()
 {
-    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    // Not m_mutex: the request can take up to its timeout, and the UI thread reads the account.
+    std::lock_guard<std::mutex> refresh_lock(m_refresh_mutex);
+    const ElegooCloudAccount    before = account();
+    if (before.access_token.empty())
+        throw ElegooAuthError(_u8L("Not signed in to an Elegoo account."));
     BOOST_LOG_TRIVIAL(info) << "ElegooCloud: refreshing the access token";
-    const json body = {{"refreshToken", m_account.refresh_token}, {"clientId", "Slicer"}};
-    const json j    = request("POST", "/api/v1/account-center-server/account-auth/token/refresh", &body, false);
-    const json d    = j.value("data", json::object());
-    if (d.value("accessToken", "").empty())
-        throw ElegooCloudError(_u8L("Elegoo did not renew the sign-in. Sign in to your Elegoo account again."));
-    m_account.access_token     = d.value("accessToken", "");
+    const std::string expired = _u8L("Your Elegoo sign-in has expired. Sign in to your Elegoo account again.");
+    // Same request as Elegoo's own client: refresh token in the body, current access token as Bearer.
+    const json body = {{"refreshToken", before.refresh_token}, {"clientId", "Slicer"}};
+    json       j;
+    try {
+        j = request("POST", "/api/v1/account-center-server/account-auth/token/refresh", &body, true);
+    } catch (const ElegooCloudError& e) {
+        // An answer from the API (e.g. 400 "invalid refresh token": another app signed in with this
+        // session and rotated it) means the saved sign-in is dead; a network error does not.
+        if (e.api_code == 0 && dynamic_cast<const ElegooAuthError*>(&e) == nullptr)
+            throw;
+        BOOST_LOG_TRIVIAL(warning) << "ElegooCloud: token refresh rejected (" << e.what() << "), signing out";
+        sign_out_if_unchanged(before.access_token);
+        throw ElegooAuthError(expired);
+    }
+    const json d = j.value("data", json::object());
+    if (!d.contains("accessToken") || !d["accessToken"].is_string() || d["accessToken"].get<std::string>().empty()) {
+        sign_out_if_unchanged(before.access_token);
+        throw ElegooAuthError(expired);
+    }
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    if (m_account.access_token != before.access_token)
+        return; // signed out or signed in again meanwhile: keep that account
+    m_account.access_token     = d["accessToken"].get<std::string>();
     m_account.refresh_token    = d.value("refreshToken", m_account.refresh_token);
     m_account.access_expire_ms = json_int(d.contains("expiresTime") ? &d["expiresTime"] : nullptr);
     if (const json* id = find_key(d, {"accountId"}))
@@ -902,9 +1029,23 @@ void ElegooCloud::refresh()
     save();
 }
 
+void ElegooCloud::sign_out_if_unchanged(const std::string& access_token)
+{
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    if (m_account.access_token == access_token)
+        sign_out();
+}
+
 std::vector<ElegooCloudPrinter> ElegooCloud::printers()
 {
     const json                      j = call("GET", "/api/v1/device-management-server/device/list");
+    if (account().nickname.empty()) { // older sign-ins were saved without the profile
+        try {
+            load_profile();
+        } catch (const ElegooCloudError& e) {
+            BOOST_LOG_TRIVIAL(info) << "ElegooCloud: profile not loaded: " << e.what();
+        }
+    }
     std::vector<ElegooCloudPrinter> out;
     for (const json& it : j.value("data", json::array())) {
         ElegooCloudPrinter p;
