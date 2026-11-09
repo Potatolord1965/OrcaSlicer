@@ -489,6 +489,8 @@ set(SLIC3R_GUI_SOURCES
     GUI/PrinterCloudAuthDialog.hpp
     GUI/ElegooLoginDialog.cpp
     GUI/ElegooLoginDialog.hpp
+    GUI/ElegooCloudMonitor.cpp
+    GUI/ElegooCloudMonitor.hpp
     GUI/VendorSendBackends.cpp
     GUI/VendorSendDialog.cpp
     GUI/VendorSendDialog.hpp

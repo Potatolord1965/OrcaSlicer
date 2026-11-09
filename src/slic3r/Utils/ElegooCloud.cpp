@@ -49,7 +49,12 @@ constexpr const char* AGORA_APP_ID    = "d035320941e34cd5bc4ec106eff05580"; // p
 constexpr const char* ELEGOO_LINK_RAW =
     "https://raw.githubusercontent.com/ELEGOO-3D/elegoo-link/ec2d2269b588608a1b9ccb4ff9627ddb758ea482/thirdparty/agora";
 
+// Printer methods, shared with the LAN protocol (see resources/plugins/elegoo_cc2_lan.py).
+constexpr int M_PRINTER_STATUS    = 1002;
 constexpr int M_START_PRINT       = 1020;
+constexpr int M_PAUSE_PRINT       = 1021;
+constexpr int M_STOP_PRINT        = 1022;
+constexpr int M_RESUME_PRINT      = 1023;
 constexpr int M_DOWNLOAD_FILE     = 1057;
 constexpr int M_CANCEL_DOWNLOAD   = 1058;
 constexpr int M_SET_AUTO_REFILL   = 2004;
@@ -681,7 +686,17 @@ ElegooCloud& ElegooCloud::instance()
     return cloud;
 }
 
+// The messaging session kept open for live status (see live_request).
+struct ElegooCloud::LiveSession
+{
+    std::string                     serial;
+    std::unique_ptr<PrinterChannel> channel;
+};
+
 ElegooCloud::ElegooCloud() { load(); }
+
+// At exit the Agora runtime may already be going away: leave a still-open session to the OS.
+ElegooCloud::~ElegooCloud() { (void) m_live.release(); }
 
 fs::path ElegooCloud::data_folder() { return fs::path(data_dir()) / "elegoo_cloud"; }
 
@@ -1105,9 +1120,7 @@ static json agora_credential(ElegooCloud& cloud, const std::function<json(const 
 ElegooCanvasInfo ElegooCloud::canvas_info(const std::string& serial)
 {
     std::lock_guard<std::mutex> rtm_lock(m_rtm_mutex);
-    const json      cred = agora_credential(*this, [this](const std::string& p) { return call("GET", p); });
-    PrinterChannel  ch(cred, serial, nullptr);
-    const json      reply = ch.request(M_CANVAS_STATUS, json::object(), 10);
+    const json      reply = live_request(serial, M_CANVAS_STATUS, json::object());
     const json      ci    = reply.value("result", json::object()).value("canvas_info", json::object());
     ElegooCanvasInfo info;
     info.auto_refill = ci.value("auto_refill", false);
@@ -1130,6 +1143,105 @@ ElegooCanvasInfo ElegooCloud::canvas_info(const std::string& serial)
         }
     }
     return info;
+}
+
+json ElegooCloud::live_request(const std::string& serial, int method, const json& params, int timeout_s)
+{
+    for (int attempt = 0;; ++attempt) {
+        if (!m_live || m_live->serial != serial || !m_live->channel) {
+            m_live.reset();
+            const json cred = agora_credential(*this, [this](const std::string& p) { return call("GET", p); });
+            auto       live = std::make_unique<LiveSession>();
+            live->serial    = serial;
+            live->channel   = std::make_unique<PrinterChannel>(cred, serial, nullptr);
+            m_live          = std::move(live);
+        }
+        try {
+            return m_live->channel->request(method, params, timeout_s);
+        } catch (const ElegooCloudError& e) {
+            // A session left open can lose its login (token expiry, another login); open a fresh one once.
+            m_live.reset();
+            if (attempt > 0 || dynamic_cast<const ElegooAuthError*>(&e) != nullptr)
+                throw;
+            BOOST_LOG_TRIVIAL(info) << "ElegooCloud: reopening the messaging session: " << e.what();
+        }
+    }
+}
+
+ElegooPrinterStatus ElegooCloud::live_status(const std::string& serial)
+{
+    std::lock_guard<std::mutex> rtm_lock(m_rtm_mutex);
+    const json                  reply = live_request(serial, M_PRINTER_STATUS, json::object());
+    const json                  r     = reply.value("result", json::object());
+    auto obj = [&](const char* key) { return r.contains(key) && r[key].is_object() ? r[key] : json::object(); };
+    auto num = [](const json& o, const char* key) {
+        return o.contains(key) && o[key].is_number() ? o[key].get<double>() : 0.;
+    };
+    const json ms = obj("machine_status");
+    const json ps = obj("print_status");
+
+    ElegooPrinterStatus s;
+    // Same mapping as the CC2 LAN plug-in (elegoo_cc2_lan.py, gcode_state).
+    const int st  = int(num(ms, "status"));
+    const int sub = int(num(ms, "sub_status"));
+    if (st == 2) {
+        if (sub == 2501 || sub == 2502 || sub == 2505)
+            s.state = "PAUSE";
+        else if (sub == 2077)
+            s.state = "FINISH";
+        else if (sub == 2503 || sub == 2504)
+            s.state = "FAILED";
+        else if (sub == 1045 || sub == 1096 || sub == 1405 || sub == 1906 || sub == 1041 || sub == 2801 || sub == 2802 ||
+                 sub == 2901 || sub == 2902)
+            s.state = "PREPARE";
+        else
+            s.state = "RUNNING";
+    } else if (st == 14) {
+        s.state = "FAILED";
+    } else if (st == 0) {
+        s.state = "PREPARE";
+    }
+    s.progress     = int(num(ms, "progress"));
+    s.remaining_s  = int(num(ps, "remaining_time_sec"));
+    s.layer        = int(num(ps, "current_layer"));
+    s.total_layers = int(num(ps, "total_layer"));
+    s.filename     = ps.contains("filename") && ps["filename"].is_string() ? ps["filename"].get<std::string>() : std::string();
+    const json ext = obj("extruder");
+    const json bed = obj("heater_bed");
+    s.nozzle        = num(ext, "temperature");
+    s.nozzle_target = num(ext, "target");
+    s.bed           = num(bed, "temperature");
+    s.bed_target    = num(bed, "target");
+    const json chamber = obj("ztemperature_sensor");
+    if (chamber.contains("temperature"))
+        s.chamber = num(chamber, "temperature");
+    const json fans = obj("fans");
+    if (fans.contains("fan") && fans["fan"].is_object() && fans["fan"].contains("speed")) {
+        const double speed = num(fans["fan"], "speed");
+        s.fan_percent      = int(speed <= 100 ? speed : speed * 100 / 255);
+    }
+    const json led = obj("led");
+    if (led.contains("status")) {
+        s.has_light = true;
+        s.light_on  = led["status"].is_number() ? led["status"].get<double>() != 0 : led["status"].is_boolean() && led["status"].get<bool>();
+    }
+    return s;
+}
+
+void ElegooCloud::command(const std::string& serial, ElegooCommand cmd)
+{
+    std::lock_guard<std::mutex> rtm_lock(m_rtm_mutex);
+    switch (cmd) {
+    case ElegooCommand::Pause: live_request(serial, M_PAUSE_PRINT, json::object()); break;
+    case ElegooCommand::Resume: live_request(serial, M_RESUME_PRINT, json::object()); break;
+    case ElegooCommand::Stop: live_request(serial, M_STOP_PRINT, json::object()); break;
+    }
+}
+
+void ElegooCloud::close_live_session()
+{
+    std::lock_guard<std::mutex> rtm_lock(m_rtm_mutex);
+    m_live.reset();
 }
 
 std::string ElegooCloud::upload_to_storage(const std::string& server_name, const fs::path& file, const std::string& md5_base64,
@@ -1213,6 +1325,7 @@ void ElegooCloud::send(const fs::path& file, const std::string& display_name, co
     BOOST_LOG_TRIVIAL(info) << "ElegooCloud: uploaded " << name << " (" << fs::file_size(file) << " bytes)";
 
     std::lock_guard<std::mutex> rtm_lock(m_rtm_mutex);
+    m_live.reset(); // one messaging login per account: the send uses its own, with download progress
     const json     cred = agora_credential(*this, [this](const std::string& p) { return call("GET", p); });
     PrinterChannel ch(cred, serial, progress_in);
     const std::string task_id = serial;

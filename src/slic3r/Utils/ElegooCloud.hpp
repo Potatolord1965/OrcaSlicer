@@ -98,6 +98,25 @@ struct ElegooPrintOptions
     std::vector<ElegooSlotMapEntry> slot_map;
 };
 
+// Live printer status (method 1002), as the printer reports it.
+struct ElegooPrinterStatus
+{
+    std::string state{"IDLE"}; // IDLE, PREPARE, RUNNING, PAUSE, FINISH, FAILED
+    int         progress{0};   // percent
+    int         remaining_s{0};
+    int         layer{0};
+    int         total_layers{0};
+    std::string filename;
+    double      nozzle{0}, nozzle_target{0};
+    double      bed{0}, bed_target{0};
+    double      chamber{-1}; // -1: no sensor
+    int         fan_percent{-1};
+    bool        has_light{false};
+    bool        light_on{false};
+};
+
+enum class ElegooCommand { Pause, Resume, Stop };
+
 // Reports progress 0..100 and a status line; returns true to cancel.
 using ElegooProgressFn = std::function<bool(int percent, const std::string& status)>;
 
@@ -129,14 +148,24 @@ public:
     std::vector<ElegooCloudPrinter> printers();
     int                             printer_state(const std::string& serial);
     ElegooCanvasInfo                canvas_info(const std::string& serial);
+    // Over the account's messaging session, which stays open between calls for the same printer.
+    ElegooPrinterStatus             live_status(const std::string& serial);
+    void                            command(const std::string& serial, ElegooCommand cmd);
+    // Ends the messaging session kept for live_status() (it logs out; blocking).
+    void                            close_live_session();
     void send(const boost::filesystem::path& file, const std::string& display_name, const std::string& serial,
               const ElegooPrintOptions& options, const ElegooProgressFn& progress);
 
     static std::string user_agent();
     static boost::filesystem::path data_folder();
 
+    ~ElegooCloud();
+
 private:
     ElegooCloud();
+    struct LiveSession;
+    // Request over the kept session; opens it, or reopens it once after a failure. Needs m_rtm_mutex held.
+    nlohmann::json live_request(const std::string& serial, int method, const nlohmann::json& params, int timeout_s = 10);
     std::string    api_base() const;
     nlohmann::json request(const std::string& method, const std::string& path, const nlohmann::json* body, bool auth);
     nlohmann::json call(const std::string& method, const std::string& path, const nlohmann::json* body = nullptr);
@@ -156,7 +185,8 @@ private:
     std::mutex m_refresh_mutex;
     ElegooCloudAccount           m_account;
     // One RTM session per account at a time: the cloud allows a single messaging login.
-    std::mutex m_rtm_mutex;
+    std::mutex                   m_rtm_mutex;
+    std::unique_ptr<LiveSession> m_live; // guarded by m_rtm_mutex
 };
 
 // PrintHost that sends through ElegooCloud, so cloud jobs use the regular upload queue.
