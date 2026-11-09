@@ -8,6 +8,8 @@ set(SLIC3R_APP_KEY "UnifiedSlicer")
 set(SLIC3R_APP_CATALOG "OrcaSlicer")
 # Windows executable name.
 set(SLIC3R_APP_EXE "unified-slicer")
+# Unified Slicer's own release number, shown on the splash and About screens.
+set(UNIFIED_VERSION "1.1.0")
 
 if(NOT DEFINED BBL_INTERNAL_TESTING)
 set(BBL_INTERNAL_TESTING "0")

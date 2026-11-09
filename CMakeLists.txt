@@ -1358,10 +1358,11 @@ configure_file(${LIBDIR}/dev-utils/platform/unix/fhs.hpp.in ${LIBDIR_BIN}/dev-ut
 
 set (CPACK_PACKAGE_NAME "${SLIC3R_APP_NAME}")
 set (CPACK_PACKAGE_VENDOR "Unified Slicer")
-set (CPACK_PACKAGE_VERSION_MAJOR "${ORCA_VERSION_MAJOR}")
-set (CPACK_PACKAGE_VERSION_MINOR "${ORCA_VERSION_MINOR}")
-set (CPACK_PACKAGE_VERSION_PATCH "${ORCA_VERSION_PATCH}")
-set (CPACK_PACKAGE_FILE_NAME "UnifiedSlicer_Windows_Installer_V${SoftFever_VERSION}")
+string(REGEX MATCH "^([0-9]+)\\.([0-9]+)\\.([0-9]+)" _unified_ver_match "${UNIFIED_VERSION}")
+set (CPACK_PACKAGE_VERSION_MAJOR "${CMAKE_MATCH_1}")
+set (CPACK_PACKAGE_VERSION_MINOR "${CMAKE_MATCH_2}")
+set (CPACK_PACKAGE_VERSION_PATCH "${CMAKE_MATCH_3}")
+set (CPACK_PACKAGE_FILE_NAME "UnifiedSlicer_Windows_Installer_V${UNIFIED_VERSION}")
 # Suffix the Windows installer with its target arch so the x64 and arm64 builds
 # produce distinct filenames (matches ARCH_SUFFIX in build_orca.yml). Same
 # CMAKE_SYSTEM_PROCESSOR mapping used by orcaslicer_copy_dlls() above.
