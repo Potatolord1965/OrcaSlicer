@@ -1836,13 +1836,7 @@ void AppConfig::clear_remind_network_update_later()
 std::vector<std::string> AppConfig::get_cloud_providers() const
 {
     std::vector<std::string> result;
-    std::string providers = get(SETTING_CLOUD_PROVIDERS);
-    if (providers.empty()) {
-        result.push_back("orca");
-        return result;
-    }
-
-    std::stringstream ss(providers);
+    std::stringstream ss(get(SETTING_CLOUD_PROVIDERS));
     std::string provider;
     while (std::getline(ss, provider, ';')) {
         if (!provider.empty())
@@ -1852,6 +1846,9 @@ std::vector<std::string> AppConfig::get_cloud_providers() const
     if (std::find(result.begin(), result.end(), "orca") == result.end()) {
         result.insert(result.begin(), "orca");
     }
+    // Unified Slicer: Bambu Cloud is built in, so its account is always offered next to Orca's.
+    if (std::find(result.begin(), result.end(), "bbl") == result.end())
+        result.insert(result.begin() + 1, "bbl");
     return result;
 }
 
@@ -1882,8 +1879,8 @@ void AppConfig::add_cloud_provider(const std::string& provider)
 
 void AppConfig::remove_cloud_provider(const std::string& provider)
 {
-    if (provider == "orca")
-        return; // Cannot remove orca
+    if (provider == "orca" || provider == "bbl")
+        return; // Cannot remove orca, nor the built-in Bambu Cloud
     auto providers = get_cloud_providers();
     providers.erase(std::remove(providers.begin(), providers.end(), provider), providers.end());
     set_cloud_providers(providers);

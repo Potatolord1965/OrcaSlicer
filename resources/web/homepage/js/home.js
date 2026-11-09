@@ -358,8 +358,9 @@ function ToggleBambuSection() {
 }
 
 function Set_AccountMenu_Event() {
-  var bExpanded = false;
-  try { bExpanded = localStorage.getItem(BAMBU_FOLD_KEY) === "1"; } catch (e) {}
+  /*----Unified Slicer: both accounts are listed; the Bambu one folds only once the user folds it----*/
+  var bExpanded = true;
+  try { bExpanded = localStorage.getItem(BAMBU_FOLD_KEY) !== "0"; } catch (e) {}
   SetBambuSectionExpanded(bExpanded, false);
 
   $(document).mousedown(function (e) {

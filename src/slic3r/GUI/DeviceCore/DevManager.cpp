@@ -108,7 +108,9 @@ namespace Slic3r
             obj->bind_state          = "free";
             obj->bind_sec_link       = "secure";
             obj->m_is_online         = true;
-            obj->last_alive          = Slic3r::Utils::get_current_time_utc();
+            // Unified Slicer: remembered, not seen. Discovery sets the time when the printer
+            // announces itself; until then the Device tab lists it as offline, not idle.
+            obj->last_alive          = 0;
             obj->set_access_code(get_access_code_with_legacy_fallback(config, m.dev_id, obj->printer_agent_id), false);
             if (obj->has_access_right()) {
                 localMachineList.insert(std::make_pair(m.dev_id, obj));
