@@ -27,7 +27,9 @@
 #include "slic3r/GUI/MsgDialog.hpp"
 #include "slic3r/Utils/CloudProvider.hpp"
 #include "slic3r/Utils/ElegooCloud.hpp"
+#include "slic3r/Utils/MarkforgedEiger.hpp"
 #include "slic3r/GUI/ElegooLoginDialog.hpp"
+#include <wx/utils.h>
 #include <thread>
 #include "slic3r/Utils/ICloudServiceAgent.hpp"
 #include "slic3r/Utils/IPrinterAgent.hpp"
@@ -359,7 +361,8 @@ namespace {
 // Written by the Markforged thread's agent plug-in; other keys in it belong to the plug-in.
 boost::filesystem::path markforged_settings_path()
 {
-    return boost::filesystem::path(data_dir()) / "orca_plugins" / "markforged_eiger_data" / "settings.json";
+    // The plug-in keeps its data next to itself, in its package folder (see seed_bundled_plugins).
+    return boost::filesystem::path(data_dir()) / "orca_plugins" / "markforged_eiger" / "markforged_eiger_data" / "settings.json";
 }
 
 nlohmann::json read_markforged_settings()
@@ -429,6 +432,15 @@ void MarkforgedCloudProvider::login(wxWindow* parent)
     if (access_key.empty() || secret_key.empty())
         return;
 
+    // Check the keys before keeping them, so a typo shows up here and not as an empty printer list.
+    try {
+        wxBusyCursor busy;
+        Eiger({access_key, secret_key}).devices();
+    } catch (const std::exception& e) {
+        MessageDialog(parent, wxString::FromUTF8(e.what()), display_name(), wxOK | wxICON_ERROR).ShowModal();
+        return;
+    }
+
     // Merge: the plug-in keeps its own settings in the same file.
     nlohmann::json settings = read_markforged_settings();
     if (!settings.is_object())
@@ -438,6 +450,15 @@ void MarkforgedCloudProvider::login(wxWindow* parent)
     if (!write_markforged_settings(settings))
         MessageDialog(parent, _L("The API keys could not be saved."), display_name(), wxOK | wxICON_ERROR).ShowModal();
     clear_printers();
+}
+
+wxString MarkforgedCloudProvider::account_name() const
+{
+    const std::string key = read_markforged_settings().value("access_key", std::string());
+    if (key.empty())
+        return {};
+    // TRN %1% is the last characters of an Eiger API access key.
+    return format_wxstr(_L("API key …%1%"), key.size() > 4 ? key.substr(key.size() - 4) : key);
 }
 
 void MarkforgedCloudProvider::logout()
@@ -490,13 +511,15 @@ void ElegooCloudProvider::refresh_printers(PrintersCallback done)
         wxString                  error;
         try {
             for (const ElegooCloudPrinter& p : ElegooCloud::instance().printers()) {
+                // The device list carries no status; the report data does (1 idle, 2 printing).
+                const int    state = ElegooCloud::instance().printer_state(p.serial);
                 CloudPrinter cp;
                 cp.provider_id = provider;
                 cp.id          = p.serial;
                 cp.name        = wxString::FromUTF8(p.name.empty() ? p.serial : p.name);
                 cp.model       = wxString::FromUTF8(p.model);
-                cp.online      = p.state >= 0;
-                cp.status      = p.state == 2 ? _L("Printing") : p.state == 1 ? _L("Idle") : _L("Unknown");
+                cp.online      = state >= 0;
+                cp.status      = state == 2 ? _L("Printing") : state == 1 ? _L("Idle") : _L("Unknown");
                 out.push_back(std::move(cp));
             }
         } catch (const std::exception& ex) {

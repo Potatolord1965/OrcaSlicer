@@ -32,7 +32,7 @@ public:
     explicit Eiger(EigerKeys keys) : m_keys(std::move(keys)) {}
 
     // Keys from the printer preset (printhost_user / printhost_password, or printhost_apikey "ACCESS:SECRET"),
-    // else from <data_dir>/orca_plugins/markforged_eiger_data/settings.json, which the Markforged agent shares.
+    // else from <data_dir>/orca_plugins/markforged_eiger/markforged_eiger_data/settings.json, which the Markforged agent shares.
     static EigerKeys            keys_for(const DynamicPrintConfig* printer_config);
     static void                 save_keys(const EigerKeys& keys);
     static std::string          saved_settings_preset();

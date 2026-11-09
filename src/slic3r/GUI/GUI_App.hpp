@@ -566,6 +566,8 @@ public:
     wxString        transition_tridid(int trid_id) const;
     void            ShowUserGuide();
     void            ShowDownNetPluginDlg();
+    // Downloads and loads the Bambu network library in the background, without a dialog.
+    void            auto_install_network_plugin();
     void            ShowUserLogin(bool show = true, const std::string& provider = ORCA_CLOUD_PROVIDER);
     void            ShowOnlyFilament();
     // Orca auth

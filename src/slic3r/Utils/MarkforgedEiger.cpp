@@ -103,7 +103,7 @@ json perform(Http&& http)
 
 } // namespace
 
-fs::path Eiger::settings_file() { return fs::path(data_dir()) / "orca_plugins" / "markforged_eiger_data" / "settings.json"; }
+fs::path Eiger::settings_file() { return fs::path(data_dir()) / "orca_plugins" / "markforged_eiger" / "markforged_eiger_data" / "settings.json"; }
 
 EigerKeys Eiger::keys_for(const DynamicPrintConfig* cfg)
 {

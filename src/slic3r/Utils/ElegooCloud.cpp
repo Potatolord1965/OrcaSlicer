@@ -728,7 +728,30 @@ bool ElegooCloud::accept_login_report(const json& params, std::string& error)
     }
     set_account(a);
     BOOST_LOG_TRIVIAL(info) << "ElegooCloud: signed in as " << mask(a.user_id);
+    try {
+        load_profile();
+    } catch (const ElegooAuthError& e) {
+        sign_out();
+        error = e.what();
+        return false;
+    } catch (const ElegooCloudError& e) { // offline: keep the sign-in, the name fills in later
+        BOOST_LOG_TRIVIAL(warning) << "ElegooCloud: profile not loaded: " << e.what();
+    }
     return true;
+}
+
+void ElegooCloud::load_profile()
+{
+    const json d = request("GET", "/api/v1/account-center-server/account-info/account", nullptr, true).value("data", json::object());
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    auto set_if = [&](std::string& field, const char* key) {
+        if (d.contains(key) && d[key].is_string() && !d[key].get<std::string>().empty())
+            field = d[key].get<std::string>();
+    };
+    set_if(m_account.nickname, "nickname");
+    set_if(m_account.email, "email");
+    set_if(m_account.avatar, "avatarUrl");
+    save();
 }
 
 #ifdef _WIN32
@@ -766,6 +789,14 @@ bool ElegooCloud::import_from_elegooslicer(std::string& error)
             return false;
         }
         set_account(a);
+        // ElegooSlicer renews its tokens on its own, which retires older copies; check this one works.
+        try {
+            load_profile();
+        } catch (const ElegooAuthError&) {
+            sign_out();
+            error = _u8L("The sign-in ElegooSlicer saved is no longer valid. Sign in with the Elegoo page instead.");
+            return false;
+        }
         return true;
     } catch (const std::exception& e) {
         error = e.what();
@@ -843,17 +874,22 @@ json ElegooCloud::request(const std::string& method, const std::string& path, co
         .perform_sync();
     const std::string short_path = path.substr(0, path.find('?'));
     if (status == 401 || status == 403)
-        throw ElegooCloudError(_u8L("Elegoo rejected the sign-in. Sign in to your Elegoo account again."));
+        throw ElegooAuthError(_u8L("Elegoo rejected the sign-in. Sign in to your Elegoo account again."));
     if (!error.empty())
         throw ElegooCloudError("Elegoo API " + method + " " + short_path + " failed: " + error + " " + reply.substr(0, 200));
     const json j = json::parse(reply, nullptr, false);
     if (!j.is_object())
         throw ElegooCloudError("Unexpected reply from the Elegoo API for " + short_path);
-    const int code = j.value("code", -1);
-    if (code == 401 || code == 403)
-        throw ElegooCloudError(_u8L("Elegoo rejected the sign-in. Sign in to your Elegoo account again."));
+    // The API answers HTTP 200 with its own code; the text is in "msg" (older replies: "message").
+    const int         code = j.value("code", -1);
+    const std::string text = j.contains("msg") && j["msg"].is_string() ? j["msg"].get<std::string>() : j.value("message", "");
     if (code != 0)
-        throw ElegooCloudError("Elegoo API " + short_path + ": code " + std::to_string(code) + " " + j.value("message", ""));
+        BOOST_LOG_TRIVIAL(warning) << "ElegooCloud: " << method << " " << short_path << " -> code " << code
+                                   << (text.empty() ? "" : " (" + text + ")");
+    if (code == 401 || code == 403)
+        throw ElegooAuthError(_u8L("Elegoo rejected the sign-in. Sign in to your Elegoo account again."));
+    if (code != 0)
+        throw ElegooCloudError("Elegoo API " + short_path + ": code " + std::to_string(code) + (text.empty() ? "" : " " + text), code);
     return j;
 }
 
@@ -862,10 +898,13 @@ json ElegooCloud::call(const std::string& method, const std::string& path, const
     ensure_token();
     try {
         return request(method, path, body, true);
-    } catch (const ElegooCloudError&) {
-        // One retry with a refreshed token: the access token may have been revoked early.
-        if (account().refresh_token.empty())
+    } catch (const ElegooAuthError&) {
+        // One retry with a refreshed token, only when the sign-in itself was rejected: the access
+        // token may have been revoked early. Other errors are not fixed by a new token.
+        if (account().refresh_token.empty()) {
+            sign_out();
             throw;
+        }
         refresh();
         return request(method, path, body, true);
     }
@@ -889,11 +928,26 @@ void ElegooCloud::refresh()
 {
     std::lock_guard<std::recursive_mutex> lock(m_mutex);
     BOOST_LOG_TRIVIAL(info) << "ElegooCloud: refreshing the access token";
+    const std::string expired = _u8L("Your Elegoo sign-in has expired. Sign in to your Elegoo account again.");
+    // Same request as Elegoo's own client: refresh token in the body, current access token as Bearer.
     const json body = {{"refreshToken", m_account.refresh_token}, {"clientId", "Slicer"}};
-    const json j    = request("POST", "/api/v1/account-center-server/account-auth/token/refresh", &body, false);
-    const json d    = j.value("data", json::object());
-    if (d.value("accessToken", "").empty())
-        throw ElegooCloudError(_u8L("Elegoo did not renew the sign-in. Sign in to your Elegoo account again."));
+    json       j;
+    try {
+        j = request("POST", "/api/v1/account-center-server/account-auth/token/refresh", &body, true);
+    } catch (const ElegooCloudError& e) {
+        // An answer from the API (e.g. 400 "invalid refresh token": another app signed in with this
+        // session and rotated it) means the saved sign-in is dead; a network error does not.
+        if (e.api_code == 0 && dynamic_cast<const ElegooAuthError*>(&e) == nullptr)
+            throw;
+        BOOST_LOG_TRIVIAL(warning) << "ElegooCloud: token refresh rejected (" << e.what() << "), signing out";
+        sign_out();
+        throw ElegooAuthError(expired);
+    }
+    const json d = j.value("data", json::object());
+    if (d.value("accessToken", "").empty()) {
+        sign_out();
+        throw ElegooAuthError(expired);
+    }
     m_account.access_token     = d.value("accessToken", "");
     m_account.refresh_token    = d.value("refreshToken", m_account.refresh_token);
     m_account.access_expire_ms = json_int(d.contains("expiresTime") ? &d["expiresTime"] : nullptr);
@@ -905,6 +959,13 @@ void ElegooCloud::refresh()
 std::vector<ElegooCloudPrinter> ElegooCloud::printers()
 {
     const json                      j = call("GET", "/api/v1/device-management-server/device/list");
+    if (account().nickname.empty()) { // older sign-ins were saved without the profile
+        try {
+            load_profile();
+        } catch (const ElegooCloudError& e) {
+            BOOST_LOG_TRIVIAL(info) << "ElegooCloud: profile not loaded: " << e.what();
+        }
+    }
     std::vector<ElegooCloudPrinter> out;
     for (const json& it : j.value("data", json::array())) {
         ElegooCloudPrinter p;
