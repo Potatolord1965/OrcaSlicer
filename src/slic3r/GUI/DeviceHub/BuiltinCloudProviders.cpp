@@ -16,8 +16,11 @@
 
 #include "libslic3r/PresetBundle.hpp"
 #include "libslic3r/PrintConfig.hpp"
+#include "libslic3r/Time.hpp"
 #include "libslic3r/Utils.hpp"
 #include "slic3r/GUI/DeviceCore/DevManager.h"
+#include "slic3r/GUI/DeviceCore/DevConfigUtil.h"
+#include <set>
 #include "slic3r/GUI/DeviceManager.hpp"
 #include "slic3r/GUI/GUI.hpp"
 #include "slic3r/GUI/GUI_App.hpp"
@@ -114,38 +117,156 @@ void BambuCloudProvider::logout()
     CloudPrinterProviders::notify_changed(id());
 }
 
+namespace {
+
+// The Bambu account's printers as the cloud last listed them. The DeviceManager keeps a machine
+// list only for the live printer agent's account, so with another brand's preset selected it has
+// no Bambu printers at all; the hub asks the account itself.
+struct BambuCloudPrinter
+{
+    std::string name;
+    std::string model;
+    bool        online{false};
+    std::string task_status;
+};
+std::mutex                               s_bambu_mutex;
+std::map<std::string, BambuCloudPrinter> s_bambu_cloud;
+std::atomic<long long>                   s_bambu_last_fetch{0};
+std::atomic<bool>                        s_bambu_fetching{false};
+
+void parse_bambu_cloud_list(const std::string& body)
+{
+    std::map<std::string, BambuCloudPrinter> list;
+    const nlohmann::json j = nlohmann::json::parse(body);
+    if (!j.contains("devices") || !j["devices"].is_array())
+        return; // no list in the answer: keep the last one
+    for (const nlohmann::json& d : j["devices"]) {
+        const std::string dev_id = d.contains("dev_id") && d["dev_id"].is_string() ? d["dev_id"].get<std::string>() : std::string();
+        if (dev_id.empty())
+            continue;
+        BambuCloudPrinter p;
+        p.name = d.contains("dev_name") && d["dev_name"].is_string() ? d["dev_name"].get<std::string>() : dev_id;
+        const std::string model = d.contains("dev_model_name") && d["dev_model_name"].is_string() ? d["dev_model_name"].get<std::string>() : std::string();
+        if (!model.empty())
+            p.model = DevPrinterConfigUtil::get_printer_display_name(model);
+        if (p.model.empty() && d.contains("dev_product_name") && d["dev_product_name"].is_string())
+            p.model = d["dev_product_name"].get<std::string>();
+        if (p.model.empty())
+            p.model = model;
+        p.online      = d.contains("dev_online") && d["dev_online"].is_boolean() && d["dev_online"].get<bool>();
+        p.task_status = d.contains("task_status") && d["task_status"].is_string() ? d["task_status"].get<std::string>() : std::string();
+        list.emplace(dev_id, std::move(p));
+    }
+    std::lock_guard<std::mutex> lock(s_bambu_mutex);
+    s_bambu_cloud = std::move(list);
+}
+
+} // namespace
+
 void BambuCloudProvider::refresh_printers(PrintersCallback done)
 {
     std::vector<CloudPrinter> printers;
-    DeviceManager* dev = wxGetApp().getDeviceManager();
-    if (dev == nullptr) {
-        done(std::move(printers), {});
-        return;
+    DeviceManager* dev   = wxGetApp().getDeviceManager();
+    NetworkAgent*  agent = wxGetApp().getAgent();
+
+    // The account's list (with each printer's online flag and job state), at most every 30 s,
+    // off the GUI thread; the page refreshes when it arrives.
+    const long long now = static_cast<long long>(Slic3r::Utils::get_current_time_utc());
+    if (!is_logged_in()) {
+        std::lock_guard<std::mutex> lock(s_bambu_mutex);
+        s_bambu_cloud.clear();
+        s_bambu_last_fetch = 0; // fetch right after the next login
+    } else if (now - s_bambu_last_fetch.load() >= 30 && !s_bambu_fetching.exchange(true)) {
+        s_bambu_last_fetch = now;
+        std::shared_ptr<ICloudServiceAgent> cloud = agent != nullptr ? agent->get_cloud_agent(BBL_CLOUD_PROVIDER) : nullptr;
+        if (cloud) {
+            const std::string provider = id();
+            std::thread([cloud, provider]() {
+                unsigned int http_code = 0;
+                std::string  body;
+                try {
+                    if (cloud->get_user_print_info(&http_code, &body) == 0)
+                        parse_bambu_cloud_list(body);
+                } catch (const std::exception& e) {
+                    BOOST_LOG_TRIVIAL(warning) << "Device hub: Bambu printer list unreadable: " << e.what();
+                }
+                s_bambu_fetching = false;
+                CloudPrinterProviders::notify_changed(provider);
+            }).detach();
+        } else {
+            s_bambu_fetching = false;
+        }
     }
 
-    // Cloud machines first; a LAN machine also bound to the account is listed once.
-    std::map<std::string, MachineObject*> machines = dev->get_local_machinelist();
-    for (const auto& [dev_id, obj] : dev->get_user_machinelist())
-        machines[dev_id] = obj;
-
-    for (const auto& [dev_id, obj] : machines) {
-        if (obj == nullptr)
-            continue;
+    // What the live Bambu agent knows: LAN printers it discovered and the one it is connected to.
+    std::map<std::string, MachineObject*> local, user;
+    if (dev != nullptr) {
+        local = dev->get_local_machinelist();
+        user  = dev->get_user_machinelist();
+    }
+    auto is_bambu = [](const std::string& dev_id, const MachineObject* obj) {
         // The discovery list also holds every other brand's machines: the CC2 LAN plugin's
         // ("cc2-<ip>") and the one a non-Bambu preset's host creates (keyed by that address, e.g.
-        // "10.0.0.45"). Only Bambu printers belong here; their ids are serial numbers, never addresses.
-        if (dev_id.rfind("cc2-", 0) == 0 || dev_id.find_first_of(".:") != std::string::npos)
-            continue;
-        if (!obj->printer_agent_id.empty() && obj->printer_agent_id != BBL_PRINTER_AGENT_ID)
-            continue;
+        // "10.0.0.45"). Bambu printers' ids are serial numbers, never addresses.
+        if (obj == nullptr || dev_id.rfind("cc2-", 0) == 0 || dev_id.find_first_of(".:") != std::string::npos)
+            return false;
+        return obj->printer_agent_id.empty() || obj->printer_agent_id == BBL_PRINTER_AGENT_ID;
+    };
+    // LAN discovery repeats every few seconds while a printer is on, so an announcement older than
+    // this means it is off (or the Bambu agent is not live to hear it).
+    constexpr long long LAN_ALIVE_S = 60;
+
+    std::map<std::string, BambuCloudPrinter> cloud;
+    {
+        std::lock_guard<std::mutex> lock(s_bambu_mutex);
+        cloud = s_bambu_cloud;
+    }
+    std::set<std::string> ids;
+    for (const auto& [dev_id, p] : cloud)
+        ids.insert(dev_id);
+    for (const auto* list : {&local, &user})
+        for (const auto& [dev_id, obj] : *list)
+            if (is_bambu(dev_id, obj))
+                ids.insert(dev_id);
+
+    for (const std::string& dev_id : ids) {
+        auto           cloud_it = cloud.find(dev_id);
+        MachineObject* lan      = local.count(dev_id) && is_bambu(dev_id, local[dev_id]) ? local[dev_id] : nullptr;
+        MachineObject* bound    = user.count(dev_id) && is_bambu(dev_id, user[dev_id]) ? user[dev_id] : nullptr;
+        MachineObject* obj      = bound != nullptr ? bound : lan;
+
+        // MachineObject::is_online() alone is not the printer's state: a LAN printer saved from an
+        // earlier session starts as "online" with no status at all, which listed switched-off
+        // printers as Idle. Online means: reporting right now, online by the account's list, or
+        // seen on the network a moment ago.
+        const bool connected = obj != nullptr && obj->is_connected() && !obj->print_status.empty();
+        const bool lan_alive = lan != nullptr && lan->last_alive > 0 && now - static_cast<long long>(lan->last_alive) < LAN_ALIVE_S;
+        const bool online    = connected || lan_alive || (cloud_it != cloud.end() && cloud_it->second.online);
+
         CloudPrinter p;
         p.provider_id = id();
         p.id          = dev_id;
-        p.name        = from_u8(obj->get_dev_name());
-        p.model       = obj->get_printer_type_display_str();
-        p.online      = obj->is_online();
-        p.status      = p.online ? print_status_text(obj->print_status) : _L("Offline");
-        if (p.online && (obj->print_status == "RUNNING" || obj->print_status == "PAUSE"))
+        if (obj != nullptr) {
+            p.name  = from_u8(obj->get_dev_name());
+            p.model = obj->get_printer_type_display_str();
+        }
+        if (cloud_it != cloud.end()) {
+            if (p.name.empty())
+                p.name = from_u8(cloud_it->second.name);
+            if (p.model.empty())
+                p.model = from_u8(cloud_it->second.model);
+        }
+        p.online = online;
+        // The live report when connected, else the job the account reports; with neither the
+        // printer is reachable but its state unknown, which is not the same as idle.
+        const std::string status = connected ? obj->print_status : cloud_it != cloud.end() ? cloud_it->second.task_status : std::string();
+        if (!online)
+            p.status = _L("Offline");
+        else if (!status.empty())
+            p.status = print_status_text(status);
+        else
+            p.status = _L("Online");
+        if (connected && (obj->print_status == "RUNNING" || obj->print_status == "PAUSE"))
             p.progress = obj->mc_print_percent;
         printers.push_back(std::move(p));
     }
@@ -154,15 +275,9 @@ void BambuCloudProvider::refresh_printers(PrintersCallback done)
 
 void BambuCloudProvider::open_printer(wxWindow* parent, const std::string& printer_id)
 {
-    PresetBundle* bundle = wxGetApp().preset_bundle;
-    if (bundle == nullptr || !bundle->use_bbl_device_tab()) {
-        MessageDialog(parent, _L("Select a Bambu Lab printer preset to control this printer."), display_name(),
-                      wxOK | wxICON_INFORMATION)
-            .ShowModal();
-        return;
-    }
-    if (MainFrame* frame = wxGetApp().mainframe)
-        frame->jump_to_monitor(printer_id);
+    // Monitored on the Printer page whatever printer preset is selected.
+    if (!wxGetApp().monitor_printer(BBL_PRINTER_AGENT_ID, printer_id))
+        MessageDialog(parent, unavailable_reason(), display_name(), wxOK | wxICON_INFORMATION).ShowModal();
 }
 
 bool BambuCloudProvider::handles_printer_preset(const DynamicPrintConfig& printer_config) const
@@ -346,15 +461,11 @@ void PrinterAgentCloudProvider::refresh_printers(PrintersCallback done)
     done(std::move(printers), {});
 }
 
-void PrinterAgentCloudProvider::open_printer(wxWindow* parent, const std::string& /*printer_id*/)
+void PrinterAgentCloudProvider::open_printer(wxWindow* parent, const std::string& printer_id)
 {
-    const PresetBundle* bundle = wxGetApp().preset_bundle;
-    if (bundle != nullptr && handles_printer_preset(bundle->printers.get_edited_preset().config)) {
-        if (MainFrame* frame = wxGetApp().mainframe)
-            frame->select_tab(TAB_ID_MONITOR);
-        return;
-    }
-    login(parent);
+    // The printer's own agent drives the Printer page, whatever printer preset is selected.
+    if (!wxGetApp().monitor_printer(m_agent_id, printer_id))
+        login(parent);
 }
 
 bool PrinterAgentCloudProvider::handles_printer_preset(const DynamicPrintConfig& printer_config) const

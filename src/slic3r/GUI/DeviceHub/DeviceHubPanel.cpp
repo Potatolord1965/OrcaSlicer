@@ -364,7 +364,9 @@ void DeviceHubPanel::rebuild_entries()
     m_rail_sizer->Clear(false);
 
     add_entry(PAGE_ALL, _L("All printers"), new CloudProviderPage(m_book, nullptr), true);
-    if (m_show_native && m_native_page != nullptr)
+    // Always offered: the Printer page monitors whichever printer was opened from a service list,
+    // whatever the selected printer preset (GUI_App::monitor_printer()).
+    if (m_native_page != nullptr)
         add_entry(PAGE_PRINTER, _L("Printer"), m_native_page, false);
     if (m_show_web && m_web_page != nullptr)
         add_entry(PAGE_WEB, _L("Web UI"), m_web_page, false);
@@ -443,7 +445,7 @@ wxWindow* DeviceHubPanel::selected_page() const
 
 void DeviceHubPanel::select_default()
 {
-    if (select(PAGE_PRINTER) || select(PAGE_WEB))
+    if ((m_show_native && select(PAGE_PRINTER)) || select(PAGE_WEB))
         return;
     if (const PresetBundle* bundle = wxGetApp().preset_bundle) {
         if (CloudPrinterProviderPtr provider = CloudPrinterProviders::for_printer_preset(bundle->printers.get_edited_preset().config))

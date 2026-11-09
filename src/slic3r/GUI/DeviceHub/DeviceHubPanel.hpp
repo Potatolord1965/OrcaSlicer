@@ -83,14 +83,16 @@ public:
     wxSimplebook* book() const { return m_book; }
 
     void set_printer_pages(wxWindow* native_page, wxWindow* web_page);
-    // Adds or removes the Printer and Web UI pages, then selects the page for the selected
-    // printer when the current one went away (or when the printer changed).
+    // Says whether the selected printer preset uses the Printer page (native) and has a Web UI.
+    // The Printer page stays on the rail either way, to monitor any service's printer; the Web UI
+    // page comes and goes. Then selects the page for the selected printer when the current one
+    // went away (or when the printer changed).
     void show_printer_pages(bool native, bool web);
 
     bool        select(const std::string& key);
     std::string selected() const;
     wxWindow*   selected_page() const;
-    // Printer page if shown, else Web UI, else the selected preset's provider, else All printers.
+    // Printer page if the preset uses it, else Web UI, else the preset's provider, else All printers.
     void select_default();
 
     // Called when the user picks a page, after it is shown.

@@ -4348,6 +4348,87 @@ std::string GUI_App::canonical_printer_agent_id(const std::string& picked_id)
     return picked_id == resolve_printer_agent_id("") ? std::string() : picked_id;
 }
 
+std::shared_ptr<IPrinterAgent> GUI_App::create_live_printer_agent(const std::string& agent_id)
+{
+    const PrinterAgentInfo* agent_info = NetworkAgentFactory::get_printer_agent_info(agent_id);
+    if (!m_agent || !agent_info)
+        return nullptr;
+
+    // Unified Slicer: each printer agent names the account it uses, so Bambu, Elegoo and Orca
+    // logins stay separate. Falls back to the Orca account when that provider is not running.
+    std::string cloud_agent_id = NetworkAgentFactory::cloud_provider_for_agent(agent_info->id);
+    if (!m_agent->get_cloud_agent(cloud_agent_id))
+        cloud_agent_id = ORCA_CLOUD_PROVIDER;
+    BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << " " << agent_info->id;
+    return NetworkAgentFactory::create_printer_agent_by_id(agent_id, m_agent->get_cloud_agent(cloud_agent_id), data_dir());
+}
+
+bool GUI_App::monitor_printer(const std::string& agent_id, const std::string& dev_id)
+{
+    if (!m_agent || !m_device_manager || !mainframe || !preset_bundle)
+        return false;
+
+    const auto live = m_agent->get_printer_agent();
+    if (!live || live->get_agent_info().id != agent_id) {
+        std::shared_ptr<IPrinterAgent> agent = create_live_printer_agent(agent_id);
+        if (!agent)
+            return false;
+        set_live_printer_agent(agent);
+        BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << ": Device tab switched the live printer agent to " << agent_id;
+        m_agent->start_discovery(true, false);
+        // The device manager's account list belongs to the live agent: fetch the Bambu account's
+        // printers now, as logging in does, so a cloud printer can be selected.
+        if (agent_id == BBL_PRINTER_AGENT_ID && is_user_login(BBL_CLOUD_PROVIDER)) {
+            DeviceManager* dev = m_device_manager;
+            boost::thread([dev]() { dev->update_user_machine_list_info(BBL_CLOUD_PROVIDER); }).detach();
+        }
+    }
+    const std::string preset_agent = resolve_printer_agent_id(preset_bundle->printers.get_edited_preset().config.opt_string("printer_agent"));
+    m_monitor_agent_override       = agent_id == preset_agent ? std::string() : agent_id;
+
+    mainframe->jump_to_monitor(std::string());
+    if (!dev_id.empty())
+        select_monitored_machine(agent_id, dev_id, 30);
+    return true;
+}
+
+void GUI_App::select_monitored_machine(const std::string& agent_id, const std::string& dev_id, int tries_left)
+{
+    if (!m_device_manager || !m_agent)
+        return;
+    const auto live = m_agent->get_printer_agent();
+    if (!live || live->get_agent_info().id != agent_id)
+        return; // the user moved on to another agent meanwhile
+
+    if (m_device_manager->get_my_machine(dev_id) != nullptr || tries_left <= 0) {
+        MonitorPanel::ensure()->select_machine(dev_id);
+        return;
+    }
+    if (agent_id == BBL_PRINTER_AGENT_ID) {
+        // A Bambu account printer appears once the account's machine list arrives; the device
+        // manager selects it then.
+        m_device_manager->record_user_last_machine(dev_id);
+        m_device_manager->restore_last_machine();
+        return;
+    }
+    // Discovery announces the printer shortly after the agent starts.
+    auto* timer = new wxTimer();
+    timer->Bind(wxEVT_TIMER, [this, timer, agent_id, dev_id, tries_left](wxTimerEvent&) {
+        timer->Stop();
+        CallAfter([timer]() { delete timer; });
+        select_monitored_machine(agent_id, dev_id, tries_left - 1);
+    });
+    timer->StartOnce(500);
+}
+
+void GUI_App::restore_preset_printer_agent()
+{
+    if (m_monitor_agent_override.empty())
+        return;
+    BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << ": back to the preset's printer agent after monitoring " << m_monitor_agent_override;
+    switch_printer_agent();
+}
+
 void GUI_App::switch_printer_agent()
 {
     if (!m_agent) {
@@ -4361,37 +4442,18 @@ void GUI_App::switch_printer_agent()
     if (!mainframe || !plater_)
         return;
 
+    // A preset change (or a plug-in reload) puts the preset's agent back; the Device tab's
+    // monitor_printer() override ends here.
+    m_monitor_agent_override.clear();
+
     const DynamicPrintConfig& config = preset_bundle->printers.get_edited_preset().config;
     const std::string effective_agent_id = resolve_printer_agent_id(config.opt_string("printer_agent"));
 
-    // Check if agent is registered
-    const PrinterAgentInfo* agent_info_ptr = NetworkAgentFactory::get_printer_agent_info(effective_agent_id);
-    if (!agent_info_ptr) {
+    std::shared_ptr<IPrinterAgent> new_printer_agent = create_live_printer_agent(effective_agent_id);
+    if (!new_printer_agent) {
         // why: the selected agent's provider is gone (e.g. plugin unloaded); leaving the old
         // live agent up would keep talking to a machine the user can no longer select.
-        BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << ": agent ID '" << effective_agent_id
-                                << "' is unregistered; clearing live printer agent";
-        set_live_printer_agent(nullptr);
-        return;
-    }
-    const PrinterAgentInfo agent_info = *agent_info_ptr;
-
-    std::string log_dir        = data_dir();
-    // Unified Slicer: each printer agent names the account it uses, so Bambu, Elegoo and Orca
-    // logins stay separate. Falls back to the Orca account when that provider is not running.
-    std::string cloud_agent_id = NetworkAgentFactory::cloud_provider_for_agent(agent_info.id);
-    if (!m_agent->get_cloud_agent(cloud_agent_id))
-        cloud_agent_id = ORCA_CLOUD_PROVIDER;
-    BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << " " << agent_info.id;
-    std::shared_ptr<ICloudServiceAgent> cloud_agent = m_agent->get_cloud_agent(cloud_agent_id);
-
-    // Create new printer agent via registry
-    std::shared_ptr<IPrinterAgent> new_printer_agent =
-        NetworkAgentFactory::create_printer_agent_by_id(effective_agent_id, cloud_agent, log_dir);
-
-    if (!new_printer_agent) {
-        BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << ": failed to create agent '" << effective_agent_id
-                                   << "'; clearing live printer agent";
+        BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << ": no agent '" << effective_agent_id << "'; clearing live printer agent";
         set_live_printer_agent(nullptr);
         return;
     }
@@ -4435,6 +4497,10 @@ void GUI_App::switch_printer_agent()
 void GUI_App::switch_printer_agent_if_pending()
 {
     if (!m_agent || !preset_bundle)
+        return;
+
+    // The Device tab is monitoring a printer of another agent; printing puts the preset's back.
+    if (!m_monitor_agent_override.empty())
         return;
 
     const std::string wanted_agent_id = resolve_printer_agent_id(preset_bundle->printers.get_edited_preset().config.opt_string("printer_agent"));
@@ -5464,9 +5530,10 @@ bool GUI_App::is_user_login(const std::string& provider/* = ORCA_CLOUD_PROVIDER*
 
 std::string GUI_App::get_printer_cloud_provider() const
 {
-    const std::string agent_id = resolve_printer_agent_id(
-        preset_bundle ? preset_bundle->printers.get_edited_preset().config.opt_string("printer_agent")
-                      : std::string());
+    // The live agent's account: the Device tab may monitor another agent's printer than the preset's.
+    const std::string agent_id = !m_monitor_agent_override.empty() ? m_monitor_agent_override :
+                                 resolve_printer_agent_id(preset_bundle ? preset_bundle->printers.get_edited_preset().config.opt_string("printer_agent") :
+                                                                          std::string());
     const std::string provider = NetworkAgentFactory::cloud_provider_for_agent(agent_id);
     return (m_agent && m_agent->get_cloud_agent(provider)) ? provider : ORCA_CLOUD_PROVIDER;
 }

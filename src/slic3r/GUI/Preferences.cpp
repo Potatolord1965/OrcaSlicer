@@ -2227,11 +2227,8 @@ void PreferencesDialog::create_items()
     });
     g_sizer->Add(item_network_test);
 
-    //// ONLINE > Cloud Providers
-    g_sizer->Add(create_item_title(_L("Cloud Providers")), 1, wxEXPAND);
-
-    auto item_bambu_cloud     = create_item_bambu_cloud(_L("Enable Bambu Cloud"), _L("Allow logging into Bambu Cloud alongside Orca Cloud. When enabled, a Bambu login section appears on the homepage."));
-    g_sizer->Add(item_bambu_cloud);
+    // Unified Slicer: Bambu Cloud is built in next to Orca Cloud (AppConfig::get_cloud_providers()),
+    // so there is no "Enable Bambu Cloud" switch.
 
     //// ONLINE > Update & sync
     g_sizer->Add(create_item_title(_L("Update & sync")), 1, wxEXPAND);

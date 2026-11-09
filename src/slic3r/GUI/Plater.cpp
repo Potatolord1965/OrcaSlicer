@@ -13864,6 +13864,8 @@ void Plater::priv::on_action_slice_all(SimpleEvent&)
 
 void Plater::priv::on_action_print_plate(SimpleEvent&)
 {
+    // The Device tab may be monitoring another agent's printer; print through the preset's.
+    wxGetApp().restore_preset_printer_agent();
     if (q != nullptr) {
         BOOST_LOG_TRIVIAL(debug) << __FUNCTION__ << ":received print plate event\n" ;
     }
@@ -13890,6 +13892,8 @@ void Plater::priv::open_machine_select_dialog(int plate_idx, PrintFromType print
 
 void Plater::priv::on_action_send_to_multi_machine(SimpleEvent&)
 {
+    // The Device tab may be monitoring another agent's printer; print through the preset's.
+    wxGetApp().restore_preset_printer_agent();
     if (!m_send_multi_dlg)
         m_send_multi_dlg = new SendMultiMachinePage(q);
     m_send_multi_dlg->prepare(partplate_list.get_curr_plate_index());
@@ -13898,6 +13902,8 @@ void Plater::priv::on_action_send_to_multi_machine(SimpleEvent&)
 
 void Plater::priv::on_action_print_plate_from_sdcard(SimpleEvent&)
 {
+    // The Device tab may be monitoring another agent's printer; print through the preset's.
+    wxGetApp().restore_preset_printer_agent();
     if (q != nullptr) {
         BOOST_LOG_TRIVIAL(debug) << __FUNCTION__ << ":received print plate event\n";
     }
@@ -13965,6 +13971,8 @@ int Plater::priv::update_print_required_data(Slic3r::DynamicPrintConfig config, 
 
 void Plater::priv::on_action_send_to_printer(bool isall)
 {
+    // The Device tab may be monitoring another agent's printer; print through the preset's.
+    wxGetApp().restore_preset_printer_agent();
 	if (!m_send_to_sdcard_dlg) m_send_to_sdcard_dlg = new SendToPrinterDialog(q);
     if (isall) {
         m_send_to_sdcard_dlg->prepare(PLATE_ALL_IDX);
@@ -13988,6 +13996,8 @@ void Plater::priv::on_action_select_sliced_plate(wxCommandEvent &evt)
 
 void Plater::priv::on_action_print_all(SimpleEvent&)
 {
+    // The Device tab may be monitoring another agent's printer; print through the preset's.
+    wxGetApp().restore_preset_printer_agent();
     if (q != nullptr) {
         BOOST_LOG_TRIVIAL(debug) << __FUNCTION__ << ":received print all event\n" ;
     }

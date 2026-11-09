@@ -332,3 +332,18 @@ TEST_CASE("A backup without the checksum line is not restored", "[AppConfig][Reg
     CHECK(config.get("k").empty());
 }
 #endif
+
+TEST_CASE("Orca and the built-in Bambu Cloud are always offered", "[AppConfig][CloudProviders]")
+{
+    AppConfig config;
+    config.set_defaults();
+    const std::vector<std::string> expected{"orca", "bbl"};
+    CHECK(config.get_cloud_providers() == expected);
+
+    config.remove_cloud_provider("bbl");
+    CHECK(config.has_cloud_provider("bbl"));
+
+    config.add_cloud_provider("creality");
+    const std::vector<std::string> with_creality{"orca", "bbl", "creality"};
+    CHECK(config.get_cloud_providers() == with_creality);
+}

@@ -428,6 +428,13 @@ public:
     // finishes loading after the startup preset was applied. Otherwise leave the live agent alone.
     void switch_printer_agent_if_pending();
 
+    // Unified Slicer: the Device tab monitors any printer, whatever the selected printer preset.
+    // Makes agent_id the live printer agent (without touching the preset), opens the Printer page
+    // and selects dev_id there once the agent knows it. False when the agent is not registered.
+    bool monitor_printer(const std::string& agent_id, const std::string& dev_id);
+    // Puts the preset's printer agent back after monitor_printer() swapped it, before printing.
+    void restore_preset_printer_agent();
+
     std::string resolve_printer_agent_id(const std::string& stored_id) const;
     // ORCA TODO: in the future, bbl presets should specify "bbl" printer agent id
     // then, all resolve and canonical would just be ORCA<->""
@@ -921,6 +928,10 @@ private:
     // and the plugin load/unload callbacks (init_plugin_gui_wiring).
     void refresh_printer_agent_dropdown();
     void set_live_printer_agent(std::shared_ptr<IPrinterAgent> agent); // null clears the selection
+    // A new instance of agent_id wired to its own account (Orca's when that one is not running).
+    std::shared_ptr<IPrinterAgent> create_live_printer_agent(const std::string& agent_id);
+    // Selects dev_id on the Printer page, retrying while the agent's discovery has not found it.
+    void select_monitored_machine(const std::string& agent_id, const std::string& dev_id, int tries_left);
 
     bool            config_wizard_startup();
 	void            check_updates(const bool verbose);
@@ -928,6 +939,8 @@ private:
     // select or add MachineObject
     void            select_machine(const std::string& agent_id);
 
+    // Agent monitor_printer() made live instead of the preset's; empty when the preset's is live.
+    std::string             m_monitor_agent_override;
     bool                    m_init_app_config_from_older { false };
     bool                    m_datadir_redefined { false };
     std::string             m_older_data_dir_path;
