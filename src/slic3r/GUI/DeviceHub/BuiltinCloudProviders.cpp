@@ -29,6 +29,7 @@
 #include "slic3r/Utils/ElegooCloud.hpp"
 #include "slic3r/Utils/MarkforgedEiger.hpp"
 #include "slic3r/GUI/ElegooLoginDialog.hpp"
+#include "slic3r/GUI/ElegooCloudMonitor.hpp"
 #include <wx/utils.h>
 #include <atomic>
 #include <mutex>
@@ -130,9 +131,12 @@ void BambuCloudProvider::refresh_printers(PrintersCallback done)
     for (const auto& [dev_id, obj] : machines) {
         if (obj == nullptr)
             continue;
-        // The Elegoo CC2 LAN plugin announces its printers through the same discovery list
-        // ("cc2-<ip>"); they belong to the Elegoo account, not Bambu Lab.
-        if (dev_id.rfind("cc2-", 0) == 0)
+        // The discovery list also holds every other brand's machines: the CC2 LAN plugin's
+        // ("cc2-<ip>") and the one a non-Bambu preset's host creates (keyed by that address, e.g.
+        // "10.0.0.45"). Only Bambu printers belong here; their ids are serial numbers, never addresses.
+        if (dev_id.rfind("cc2-", 0) == 0 || dev_id.find_first_of(".:") != std::string::npos)
+            continue;
+        if (!obj->printer_agent_id.empty() && obj->printer_agent_id != BBL_PRINTER_AGENT_ID)
             continue;
         CloudPrinter p;
         p.provider_id = id();
@@ -501,13 +505,33 @@ void ElegooCloudProvider::logout()
     clear_printers();
 }
 
-// The printer's control page is the Monitor tab of an Elegoo (ElegooLink) printer preset, which
-// hosts the printer's own web UI. The generic agent provider fell back to login() here, so a
-// double-click asked for the Elegoo sign-in again and never opened anything.
+// The account's printers from the last cloud answer, shown while a new one is on its way.
+static std::mutex                s_elegoo_cloud_mutex;
+static std::vector<CloudPrinter> s_elegoo_cloud_printers;
+
+// A printer of the account (keyed by serial) opens the cloud monitor, like a Bambu cloud printer
+// opens the Device tab. A printer found on this network ("cc2-<ip>") opens its own web page on
+// the Device tab, which talks to it directly. The generic agent provider fell back to login()
+// here, so a double-click asked for the Elegoo sign-in again and never opened anything.
 void ElegooCloudProvider::open_printer(wxWindow* parent, const std::string& printer_id)
 {
-    // Discovered on this network: its web UI is at its address.
     const std::string ip = printer_id.rfind("cc2-", 0) == 0 ? printer_id.substr(4) : std::string();
+    if (ip.empty()) {
+        if (!ElegooCloud::instance().signed_in()) {
+            login(parent);
+            if (!ElegooCloud::instance().signed_in())
+                return;
+        }
+        wxString name;
+        {
+            std::lock_guard<std::mutex> lock(s_elegoo_cloud_mutex);
+            for (const CloudPrinter& p : s_elegoo_cloud_printers)
+                if (p.id == printer_id)
+                    name = p.name;
+        }
+        show_elegoo_cloud_monitor(parent, printer_id, name);
+        return;
+    }
     if (const PresetBundle* bundle = wxGetApp().preset_bundle; bundle != nullptr) {
         const DynamicPrintConfig& cfg = bundle->printers.get_edited_preset().config;
         const auto*               ht  = cfg.option<ConfigOptionEnum<PrintHostType>>("host_type");
@@ -520,18 +544,11 @@ void ElegooCloudProvider::open_printer(wxWindow* parent, const std::string& prin
     }
     wxString text = _L("To control this printer here, select your Elegoo printer preset and enter the printer's IP address in "
                        "its connection settings. Its page then opens on the Device tab.");
-    if (ip.empty()) {
-        MessageDialog(parent, text, display_name(), wxOK | wxICON_INFORMATION).ShowModal();
-        return;
-    }
     text += "\n\n" + format_wxstr(_L("Open the printer's page (%1%) in your web browser now?"), ip);
     if (MessageDialog(parent, text, display_name(), wxYES_NO | wxICON_QUESTION).ShowModal() == wxID_YES)
         wxLaunchDefaultBrowser(wxString::FromUTF8("http://" + ip));
 }
 
-// The account's printers from the last cloud answer, shown while a new one is on its way.
-static std::mutex                s_elegoo_cloud_mutex;
-static std::vector<CloudPrinter> s_elegoo_cloud_printers;
 // One account fetch at a time: the page polls every few seconds, and on a slow connection a
 // fetch outlasts that; overlapping fetches would pile up and could answer out of order.
 static std::atomic<bool>         s_elegoo_cloud_fetching{false};

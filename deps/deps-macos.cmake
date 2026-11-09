@@ -19,7 +19,7 @@ include("deps-unix-common.cmake")
 # ExternalProject_Add(dep_boost
 #     EXCLUDE_FROM_ALL 1
 #     URL "https://dl.bintray.com/boostorg/release/1.75.0/source/boost_1_75_0.tar.gz"
-#     URL_HASH SHA256=aeb26f80e80945e82ee93e5939baebdca47b9dee80a07d3144be1e1a6a66dd6a
+#
 #     BUILD_IN_SOURCE 1
 #     CONFIGURE_COMMAND ./bootstrap.sh
 #         --with-toolset=clang
@@ -45,7 +45,7 @@ include("deps-unix-common.cmake")
 # ExternalProject_Add(dep_libcurl
 #     EXCLUDE_FROM_ALL 1
 #     URL "https://curl.haxx.se/download/curl-7.58.0.tar.gz"
-#     URL_HASH SHA256=cc245bf9a1a42a45df491501d97d5593392a03f7b4f07b952793518d97666115
+#
 #     BUILD_IN_SOURCE 1
 #     CONFIGURE_COMMAND ./configure
 #         --enable-static

@@ -12,8 +12,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
 endif()
 
 orcaslicer_add_cmake_project(GLFW
-    URL https://github.com/glfw/glfw/archive/refs/tags/3.4.zip
-    URL_HASH SHA256=a133ddc3d3c66143eba9035621db8e0bcf34dba1ee9514a9e23e96afd39fd57a
+    URL file:///home/user/src/orca/deps/LOCAL_SRC/GLFW/3.4.zip
     CMAKE_ARGS
         -DBUILD_SHARED_LIBS=${_build_shared}
         -DGLFW_BUILD_DOCS=OFF

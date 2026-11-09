@@ -13,8 +13,7 @@ if (APPLE AND IS_CROSS_COMPILE)
     endif()
     ExternalProject_Add(dep_OpenEXR
         EXCLUDE_FROM_ALL    ON
-        URL https://github.com/AcademySoftwareFoundation/openexr/archive/refs/tags/v2.5.5.zip
-        URL_HASH SHA256=0307a3d7e1fa1e77e9d84d7e9a8694583fbbbfd50bdc6884e2c96b8ef6b902de
+        URL file:///home/user/src/orca/deps/LOCAL_SRC/OpenEXR/v2.5.5.zip
         INSTALL_DIR         ${DESTDIR}
         DOWNLOAD_DIR        ${DEP_DOWNLOAD_DIR}/OpenEXR
         ${_openxr_list_sep}
@@ -49,8 +48,7 @@ endif ()
 
 orcaslicer_add_cmake_project(OpenEXR
     # GIT_REPOSITORY https://github.com/openexr/openexr.git
-    URL https://github.com/AcademySoftwareFoundation/openexr/archive/refs/tags/v2.5.5.zip
-    URL_HASH SHA256=0307a3d7e1fa1e77e9d84d7e9a8694583fbbbfd50bdc6884e2c96b8ef6b902de
+    URL file:///home/user/src/orca/deps/LOCAL_SRC/OpenEXR/v2.5.5.zip
     PATCH_COMMAND ${_patch_cmd}
     DEPENDS ${ZLIB_PKG}
     GIT_TAG v2.5.5

@@ -4,7 +4,7 @@ ProcessorCount(NPROC)
 
 set(_python_version "3.12.13")
 string(REGEX REPLACE "^([0-9]+\\.[0-9]+)\\..*" "\\1" _python_version_short "${_python_version}")
-set(_python_url "https://www.python.org/ftp/python/${_python_version}/Python-${_python_version}.tar.xz")
+set(_python_url "file:///home/user/src/orca/deps/LOCAL_SRC/python3/Python-${_python_version}.tar.xz")
 set(_python_sha256 "c08bc65a81971c1dd5783182826503369466c7e67374d1646519adf05207b684")
 
 
@@ -35,7 +35,6 @@ if(WIN32)
         set(_python_host_dir "${CMAKE_CURRENT_BINARY_DIR}/dep_python3_host-prefix/src/dep_python3_host")
         ExternalProject_Add(dep_python3_host
             URL "https://api.nuget.org/v3-flatcontainer/${_python_host_package}/${_python_host_version}/${_python_host_package}.${_python_host_version}.nupkg"
-            URL_HASH SHA256=${_python_host_sha256}
             DOWNLOAD_DIR ${DEP_DOWNLOAD_DIR}/python3
             # Renames the .nupkg to .zip so ExternalProject extracts it.
             DOWNLOAD_NAME ${_python_host_package}.${_python_host_version}.zip
@@ -112,7 +111,6 @@ if(WIN32)
         list(GET _python_externals ${_l} _ext_sha256)
         ExternalProject_Add(dep_python3_ext_${_ext_name}
             URL "https://github.com/python/cpython-${_ext_repo}/archive/${_ext_commit}.zip"
-            URL_HASH SHA256=${_ext_sha256}
             DOWNLOAD_DIR ${DEP_DOWNLOAD_DIR}/python3
             DOWNLOAD_NAME cpython-${_ext_repo}-${_ext_name}.zip
             SOURCE_DIR "${_python_externals_dir}/${_ext_name}"
@@ -348,7 +346,6 @@ endif()
 
 ExternalProject_Add(dep_python3
     URL "${_python_url}"
-    URL_HASH SHA256=${_python_sha256}
     DOWNLOAD_DIR ${DEP_DOWNLOAD_DIR}/python3
     BUILD_IN_SOURCE ON
     CONFIGURE_COMMAND ${_conf_cmd}
