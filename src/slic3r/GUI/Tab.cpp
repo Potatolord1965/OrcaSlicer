@@ -381,7 +381,7 @@ void Tab::create_preset_tab()
     //search input
     m_search_item = new StaticBox(m_top_panel);
     StateColor box_colour(std::pair<wxColour, int>(*wxWHITE, StateColor::Normal));
-    StateColor box_border_colour(std::pair<wxColour, int>(wxColour("#767676"), StateColor::Normal)); // ORCA match border color with other input/combo boxes
+    StateColor box_border_colour(std::pair<wxColour, int>(wxColour("#DBDBDB"), StateColor::Normal)); // ORCA match border color with other input/combo boxes
 
     m_search_item->SetBackgroundColor(box_colour);
     m_search_item->SetBorderColor(box_border_colour);
@@ -1712,7 +1712,7 @@ void Tab::apply_preset_config_values(const std::vector<std::pair<std::string, st
     if (m_config == nullptr)
         throw std::runtime_error("The preset configuration is not available");
     if (wxGetApp().plater() == nullptr)
-        throw std::runtime_error("OrcaSlicer main window is not available");
+        throw std::runtime_error("Unified Slicer main window is not available");
 
     if (values.empty())
         return;

@@ -164,9 +164,10 @@ namespace Slic3r::GUI::GLGizmoUtils {
         // value: on a neutral grey the +-12% shift lands on #949494 / #575757, which are
         // near-duplicates of existing chrome greys and do not match the wx ramp. See
         // GUI/AccentColor.hpp.
-        ImVec4 base_orca = ImGuiWrapper::COL_ORCA;                             // Accent::Base    #767676
-        ImVec4 hover     = ImVec4(136 / 255.f, 136 / 255.f, 136 / 255.f, base_orca.w);  // Accent::Hover   #888888
-        ImVec4 active    = ImVec4(92 / 255.f, 92 / 255.f, 92 / 255.f, base_orca.w);     // Accent::Pressed #5C5C5C
+        // COL_ORCA / COL_ORCA_HOVER follow the brand accent (ImGuiWrapper::set_accent).
+        ImVec4 base_orca = ImGuiWrapper::COL_ORCA;
+        ImVec4 hover     = ImGuiWrapper::COL_ORCA_HOVER;
+        ImVec4 active    = ImVec4(base_orca.x * 0.8f, base_orca.y * 0.8f, base_orca.z * 0.8f, base_orca.w);
 
         ImGui::PushStyleColor(ImGuiCol_Button, base_orca);
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, hover);

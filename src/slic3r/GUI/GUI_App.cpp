@@ -63,6 +63,7 @@
 #include <cstdio>
 #include <libslic3r/Config.hpp>
 #include "slic3r/GUI/Widgets/StateColor.hpp"
+#include "slic3r/GUI/AccentColor.hpp"
 #include <ostream>
 #include <new>
 #include "libslic3r/Exception.hpp"
@@ -1166,7 +1167,7 @@ void GUI_App::post_init()
             MessageDialog dlg(nullptr,
                 _L("Since version 2.4.0, Unified Slicer syncs user profiles through Orca Cloud instead of Bambu Cloud.\n\n"
                    "To migrate your existing profiles, log in to Orca Cloud and they will be transferred automatically. "
-                   "To learn more about how OrcaSlicer stores and syncs your profiles, or to migrate your presets manually, check out our wiki.\n\n"
+                   "To learn more about how Unified Slicer stores and syncs your profiles, or to migrate your presets manually, check out our wiki.\n\n"
                    "If you did not use Bambu Cloud to sync profiles, this change does not affect you and you can safely ignore this message."),
                 _L("Profile syncing change"),
                 wxOK,
@@ -1332,7 +1333,7 @@ void GUI_App::start_exit_watchdog()
             std::this_thread::sleep_for(grace);
             try {
                 BOOST_LOG_SEV(logger, boost::log::trivial::error)
-                    << "OrcaSlicer did not finish closing within " << grace.count() << " s; ending the process";
+                    << "Unified Slicer did not finish closing within " << grace.count() << " s; ending the process";
             } catch (...) {
                 // A failing log sink must not stop the exit.
             }
@@ -2737,7 +2738,7 @@ void GUI_App::init_webview_runtime()
         BOOST_LOG_TRIVIAL(error) << "WebView2 runtime installation failed or still not detected.";
         wxMessageBox(format_wxstr(_L("The Microsoft WebView2 Runtime could not be installed.\n"
                                      "Some features, including the setup wizard, may appear blank until it is installed.\n"
-                                     "Please install it manually from %1% and restart Orca Slicer."),
+                                     "Please install it manually from %1% and restart Unified Slicer."),
                                   "https://developer.microsoft.com/microsoft-edge/webview2/"),
                      _L("WebView2 Runtime"), wxOK | wxICON_WARNING);
     }
@@ -3898,7 +3899,7 @@ bool GUI_App::on_init_inner()
         m_config_corrupted = false;
         show_error(nullptr,
                    _u8L(
-                       "The OrcaSlicer configuration file may be corrupted and cannot be parsed.\nOrcaSlicer has attempted to recreate the "
+                       "The Unified Slicer configuration file may be corrupted and cannot be parsed.\nUnified Slicer has attempted to recreate the "
                        "configuration file.\nPlease note, application settings will be lost, but printer profiles will not be affected."));
     }
     return true;
@@ -5270,6 +5271,32 @@ void GUI_App::force_colors_update()
 #endif // __WINDOWS__
 #endif //_MSW_DARK_MODE
     m_force_colors_update = true;
+}
+
+void GUI_App::update_brand_accent()
+{
+    if (preset_bundle == nullptr)
+        return;
+    std::string vendor = preset_bundle->get_current_vendor_name();
+    if (m_accent_vendor && *m_accent_vendor == vendor)
+        return;
+    m_accent_vendor = vendor;
+
+    const wxColour brand = Accent::brand_for_vendor(vendor);
+    StateColor::SetAccent(brand);
+    ImGuiWrapper::set_accent(brand);
+
+    // Widgets resolve StateColor at paint time, so a repaint picks up the new accent.
+    std::function<void(wxWindow*)> refresh = [&refresh](wxWindow* w) {
+        w->Refresh();
+        for (wxWindowList::compatibility_iterator node = w->GetChildren().GetFirst(); node; node = node->GetNext())
+            refresh(node->GetData());
+    };
+    for (wxWindowList::compatibility_iterator node = wxTopLevelWindows.GetFirst(); node; node = node->GetNext())
+        refresh(node->GetData());
+    if (plater_ != nullptr)
+        if (GLCanvas3D* canvas = plater_->get_current_canvas3D())
+            canvas->set_as_dirty();
 }
 
 // Called after the Preferences dialog is closed and the program settings are saved.
@@ -6884,7 +6911,7 @@ bool GUI_App::process_network_msg(std::string dev_id, std::string msg)
                                "1. Turn on LAN mode\n"
                                "2. Enable Developer mode\n\n"
                                "Developer mode allows the printer to work exclusively through local network access, "
-                               "enabling full functionality with OrcaSlicer."),
+                               "enabling full functionality with Unified Slicer."),
                             _L("Network Plug-in Restriction"), wxAPPLY | wxOK);
                 m_show_error_msgdlg = true;
                 msg_dlg.ShowModal();

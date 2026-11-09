@@ -1085,7 +1085,7 @@ function RenderPermissions(plugin) {
   const fullAccessHelp = document.createElement("p");
   fullAccessHelp.id = "permissionFullAccessHelp";
   fullAccessHelp.className = "permission-full-access-help";
-  fullAccessHelp.textContent = T("permissions_full_access_help", "Full access bypasses permission checks. The plugin can read and write most files you can access; modifying startup or application files can let code run outside these checks. Direct Python access to OrcaSlicer's configuration, secret, certificate and install-state paths stays blocked, but subprocesses are not restricted.");
+  fullAccessHelp.textContent = T("permissions_full_access_help", "Full access bypasses permission checks. The plugin can read and write most files you can access; modifying startup or application files can let code run outside these checks. Direct Python access to Unified Slicer's configuration, secret, certificate and install-state paths stays blocked, but subprocesses are not restricted.");
   accessCard.appendChild(fullAccessHelp);
   checkbox.setAttribute("aria-describedby", fullAccessHelp.id);
   if (!fullAccessAvailable) {

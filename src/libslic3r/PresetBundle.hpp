@@ -396,6 +396,8 @@ public:
 
     std::optional<FilamentBaseInfo> get_filament_by_filament_id(const std::string& filament_id, const std::string& printer_name = std::string()) const;
 
+    // Name of the vendor profile (e.g. "BBL") the edited printer's model belongs to; empty if none.
+    std::string get_current_vendor_name();
     // Orca: get vendor type
     VendorType get_current_vendor_type();
     // Vendor related handy functions

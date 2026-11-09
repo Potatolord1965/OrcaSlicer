@@ -1452,7 +1452,7 @@ wxBoxSizer* PreferencesDialog::create_item_link_association( wxString url_prefix
     // TRN %s is a URL scheme, for example "prusaslicer".
     wxString title = wxString::Format(_L("Associate %s://"), url_prefix);
     // TRN The first %s is a URL scheme, for example "prusaslicer"; the second is a website name.
-    wxString tooltip = wxString::Format(_L("Associate %s:// with Unified Slicer so that Orca can open models from %s"), url_prefix, website_name);
+    wxString tooltip = wxString::Format(_L("Associate %s:// with Unified Slicer so that it can open models from %s"), url_prefix, website_name);
 
     std::wstring registered_bin; // not used, just here to provide a ref to check fn
     bool reg_to_current_instance = wxGetApp().check_url_association(url_prefix.ToStdWstring(), registered_bin);
@@ -1724,7 +1724,7 @@ void PreferencesDialog::create_items()
         // TRN DRI_PRIME is an environment variable name and must stay as it is.
         _L("On a computer with two GPUs, run Unified Slicer on the discrete GPU instead of the one that drives the display. "
            "Some Wayland systems cannot show frames rendered on the other GPU, or fail to open the window at all. "
-           "Turn this off if the 3D view stays empty; if OrcaSlicer no longer starts, start it once with DRI_PRIME=0 "
+           "Turn this off if the 3D view stays empty; if Unified Slicer no longer starts, start it once with DRI_PRIME=0 "
            "in the environment to get back here."),
         "prefer_discrete_gpu", _L("(Requires restart)"));
     g_sizer->Add(item_discrete_gpu);
@@ -1794,7 +1794,7 @@ void PreferencesDialog::create_items()
     //// GENERAL > Preset
     g_sizer->Add(create_item_title(_L("Preset")), 1, wxEXPAND);
 
-    auto item_remember_printer = create_item_checkbox(_L("Remember printer configuration"), _L("If enabled, Orca will remember and switch filament/process configuration for each printer automatically."), "remember_printer_config");
+    auto item_remember_printer = create_item_checkbox(_L("Remember printer configuration"), _L("If enabled, Unified Slicer will remember and switch filament/process configuration for each printer automatically."), "remember_printer_config");
     g_sizer->Add(item_remember_printer);
 
     auto item_filament_preset_grouping = create_item_combobox(_L("Group user filament presets"), _L("Group user filament presets based on selection"),
@@ -2370,7 +2370,7 @@ void PreferencesDialog::create_items()
 
     auto item_plugin_printer_agents = create_item_checkbox(
         _L("Use printer agents instead of print hosts"), _L(
-            "Route print jobs for non-Bambu printers through printer plug-in agents instead of the classic print-host upload flow.\nWhen disabled, OrcaSlicer uses the legacy print-host behavior."),
+            "Route print jobs for non-Bambu printers through printer plug-in agents instead of the classic print-host upload flow.\nWhen disabled, Unified Slicer uses the legacy print-host behavior."),
         "use_printer_agents");
     g_sizer->Add(item_plugin_printer_agents);
 
