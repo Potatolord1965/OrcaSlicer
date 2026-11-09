@@ -439,6 +439,8 @@ public:
     // The accent in ImGui: follow the theme's "Accent" role (ThemeManager::apply_to_state); the
     // *_DEFAULT values are the shipped ones.
     static ImVec4 COL_ORCA;
+    // Unified Slicer: point the COL_ORCA* accents at a brand colour; invalid restores neutral.
+    static void set_accent(const wxColour &brand);
     static ImVec4 COL_ORCA_DARK;
     static ImVec4 COL_ORCA_HOVER;
     static ImVec4 COL_ORCA_HOVER_DARK;

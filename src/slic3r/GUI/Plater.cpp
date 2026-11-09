@@ -2909,7 +2909,7 @@ Sidebar::Sidebar(Plater *parent)
 
         struct PanelColors {
             wxColour bg_normal = "#FFFFFF";
-            wxColour bg_focus  = "#E5F0EE";
+            wxColour bg_focus  = "#ECECEC";
             wxColour bd_normal = "#DBDBDB";
             wxColour bd_hover  = "#767676";
             wxColour bd_focus  = "#767676";
@@ -9307,7 +9307,7 @@ std::vector<size_t> Plater::priv::load_files(const std::vector<fs::path>& input_
                                   "infill rotation template settings that may not work properly with your current infill pattern. "
                                   "This could result in weak support or print quality issues."));
                             msg_text += "\n\n" +
-                                        _(L("Would you like OrcaSlicer to automatically fix this by clearing the rotation template settings?"));
+                                        _(L("Would you like Unified Slicer to automatically fix this by clearing the rotation template settings?"));
                             MessageDialog dialog(wxGetApp().plater(), msg_text, "", wxICON_WARNING | wxYES | wxNO);
                             dialog.SetButtonLabel(wxID_YES, _L("Yes"));
                             dialog.SetButtonLabel(wxID_NO, _L("No"));
@@ -22185,6 +22185,9 @@ void Plater::on_config_change(const DynamicPrintConfig &config)
 
     if (update_scheduled)
         update();
+
+    // Unified Slicer: the accent colour follows the selected printer's brand.
+    wxGetApp().update_brand_accent();
 
     if (p->main_frame->is_loaded()) {
         this->p->schedule_background_process();

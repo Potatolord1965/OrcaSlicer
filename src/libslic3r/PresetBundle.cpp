@@ -994,38 +994,32 @@ Semver PresetBundle::get_vendor_profile_version(std::string vendor_name)
     return result_ver;
 }
 
-VendorType PresetBundle::get_current_vendor_type()
+std::string PresetBundle::get_current_vendor_name()
 {
-    auto        t      = VendorType::Unknown;
     auto        config = &printers.get_edited_preset().config;
     const auto* printer_model = config->opt<ConfigOptionString>("printer_model");
     if (printer_model == nullptr) {
         BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << ": printer_model is "
                                    << (config->has("printer_model") ? "not a string" : "missing")
-                                   << ", vendor type is Unknown";
-        return t;
+                                   << ", vendor is unknown";
+        return {};
     }
 
-    std::string vendor_name;
-    for (const auto& vendor_profile : vendors) {
-        for (const auto& vendor_model : vendor_profile.second.models) {
-            if (vendor_model.name == printer_model->value) {
-                vendor_name = vendor_profile.first;
-                break;
-            }
-        }
-        if (!vendor_name.empty())
-            break;
-    }
-    if (!vendor_name.empty())
-    {
-        if(vendor_name.compare("BBL") == 0)
-            t = VendorType::Marlin_BBL;
-        
-        if(vendor_name.compare("Qidi") == 0)
-            t = VendorType::Klipper_Qidi;
-    }
-    return t;
+    for (const auto& vendor_profile : vendors)
+        for (const auto& vendor_model : vendor_profile.second.models)
+            if (vendor_model.name == printer_model->value)
+                return vendor_profile.first;
+    return {};
+}
+
+VendorType PresetBundle::get_current_vendor_type()
+{
+    const std::string vendor_name = get_current_vendor_name();
+    if (vendor_name == "BBL")
+        return VendorType::Marlin_BBL;
+    if (vendor_name == "Qidi")
+        return VendorType::Klipper_Qidi;
+    return VendorType::Unknown;
 }
 
 bool PresetBundle::use_bbl_network()

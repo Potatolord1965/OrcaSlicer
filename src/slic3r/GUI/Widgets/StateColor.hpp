@@ -35,6 +35,9 @@ public:
     static double LAB_Delta_E(const wxColour& c1, const wxColour& c2);
 
     static void SetDarkMode(bool dark);
+    // Replace the neutral accent ramp (#767676 base, #888888 hover) with a brand colour when
+    // colours are resolved. An invalid colour restores the neutral accent.
+    static void SetAccent(wxColour const &base);
 
     static std::map<wxColour, wxColour> const & GetDarkMap();
     static wxColour darkModeColorFor(wxColour const &color);

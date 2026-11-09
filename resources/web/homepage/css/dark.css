@@ -63,8 +63,8 @@ body
 /*-----Right Top MenuBtn-----*/
 .MenuItem:hover
 {
-	border-color: #00675b;
-	background-color: #223C3C;
+	border-color: #767676;
+	background-color: #4F4F53;
 }
 
 .FileImg
@@ -82,7 +82,7 @@ body
 
 .CT_Item:hover
 {
-	background-color:#00675b; /*ORCA color*/
+	background-color:#767676; /*ORCA color*/
 }
 
 /*----User Manual------*/
@@ -134,7 +134,7 @@ body
 /*--- Account rows and account menu ---*/
 :root
 {
-	--row-hover            : #223C3C;
+	--row-hover            : #4F4F53;
 	--warn-color           : #F07E4A;
 	--account-avatar-bg    : #3A3A40;
 	--account-avatar-glyph : #7E8785;

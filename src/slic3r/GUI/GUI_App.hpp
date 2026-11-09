@@ -370,6 +370,7 @@ private:
     bool                 m_legacy_filament_check_running {false}; // a check is in progress, its dialog may be open
     std::atomic<bool>    m_migration_retry_pending {false};
     bool             m_is_dark_mode{ false };
+    std::optional<std::string> m_accent_vendor; // vendor whose brand accent is applied
     bool             m_adding_script_handler { false };
     bool             m_side_popup_status{false};
     bool             m_show_http_error_msgdlg{false};
@@ -538,6 +539,8 @@ public:
     const wxColour& get_color_hovered_btn_label() { return m_color_hovered_btn_label; }
     const wxColour& get_color_selected_btn_bg() { return m_color_selected_btn_bg; }
     void            force_colors_update();
+    // Unified Slicer: accent colour = brand of the selected printer's vendor. Cheap when unchanged.
+    void            update_brand_accent();
 #ifdef _MSW_DARK_MODE
     void            force_menu_update();
 #endif //_MSW_DARK_MODE

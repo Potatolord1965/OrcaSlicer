@@ -65,6 +65,7 @@
 #include "I18N.hpp"
 #include "Search.hpp"
 #include "BitmapCache.hpp"
+#include "Widgets/StateColor.hpp"
 #include "GUI_App.hpp"
 #include "KeyChord.hpp"
 
@@ -220,7 +221,7 @@ ImVec4 ImGuiWrapper::COL_TOOLBAR_BG_DARK = ImGuiWrapper::COL_TOOLBAR_BG_DARK_DEF
 const ImVec4 ImGuiWrapper::COL_ORCA_DEFAULT            = to_ImVec4(ColorRGBA::ORCA());
 const ImVec4 ImGuiWrapper::COL_ORCA_DARK_DEFAULT       = { 168 / 255.f, 168 / 255.f, 168 / 255.f, 1.f };
 const ImVec4 ImGuiWrapper::COL_ORCA_HOVER_DEFAULT      = { 136 / 255.f, 136 / 255.f, 136 / 255.f, 1.f };
-const ImVec4 ImGuiWrapper::COL_ORCA_HOVER_DARK_DEFAULT = { 0.f       , 129 / 255.f, 114  / 255.f, 1.f };
+const ImVec4 ImGuiWrapper::COL_ORCA_HOVER_DARK_DEFAULT = { 189 / 255.f, 189 / 255.f, 189 / 255.f, 1.f };
 ImVec4 ImGuiWrapper::COL_ORCA            = ImGuiWrapper::COL_ORCA_DEFAULT;
 ImVec4 ImGuiWrapper::COL_ORCA_DARK       = ImGuiWrapper::COL_ORCA_DARK_DEFAULT;
 ImVec4 ImGuiWrapper::COL_ORCA_HOVER      = ImGuiWrapper::COL_ORCA_HOVER_DEFAULT;
@@ -239,7 +240,8 @@ bool get_data_from_svg(const std::string &filename, unsigned int max_size_px, Th
 {
     bool compression_enabled = false;
 
-    NSVGimage *image = nsvgParseFromFile(filename.c_str(), "px", 96.0f);
+    // Unified Slicer: Orca's teal accent inside icons becomes the neutral accent.
+    NSVGimage *image = BitmapCache::nsvgParseFromFileWithReplace(filename.c_str(), "px", 96.0f, {{"#009688", Accent::Base}});
     if (image == nullptr) { return false; }
 
     float scale = (float) max_size_px / std::max(image->width, image->height);
@@ -2891,22 +2893,37 @@ void ImGuiWrapper::pop_common_window_style() {
     ImGui::PopStyleVar(5);
 }
 
+void ImGuiWrapper::set_accent(const wxColour &brand)
+{
+    if (!brand.IsOk()) {
+        COL_ORCA            = COL_ORCA_DEFAULT;
+        COL_ORCA_DARK       = COL_ORCA_DARK_DEFAULT;
+        COL_ORCA_HOVER      = COL_ORCA_HOVER_DEFAULT;
+        COL_ORCA_HOVER_DARK = COL_ORCA_HOVER_DARK_DEFAULT;
+        return;
+    }
+    auto to_vec = [](const wxColour &c) { return ImVec4(c.Red() / 255.f, c.Green() / 255.f, c.Blue() / 255.f, 1.f); };
+    COL_ORCA            = to_vec(brand);
+    COL_ORCA_DARK       = COL_ORCA;
+    COL_ORCA_HOVER      = to_vec(StateColor::LightenDarkenColor(brand, 8));
+    COL_ORCA_HOVER_DARK = to_vec(StateColor::LightenDarkenColor(brand, 16));
+}
+
 void ImGuiWrapper::push_confirm_button_style() {
     if (m_is_dark_mode) {
-        ImGui::PushStyleColor(ImGuiCol_Button,        to_ImVec4(decode_color_to_float_array(Accent::Base)));
-        ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(118.f / 255.f, 118.f / 255.f, 118.f / 255.f, 1.f));
-        // HoverDark, not Hover: ImGui does not consult gDarkColors, so the dark-mode
-        // hover lift has to be spelled out here. See GUI/AccentColor.hpp.
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, to_ImVec4(decode_color_to_float_array(Accent::HoverDark)));
-        ImGui::PushStyleColor(ImGuiCol_ButtonActive,  to_ImVec4(decode_color_to_float_array(Accent::Base)));
+        ImGui::PushStyleColor(ImGuiCol_Button,        COL_ORCA);
+        ImGui::PushStyleColor(ImGuiCol_Border,        COL_ORCA);
+        // Dark-mode hover is spelled out because ImGui does not consult gDarkColors.
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, COL_ORCA_HOVER_DARK);
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive,  COL_ORCA);
         ImGui::PushStyleColor(ImGuiCol_CheckMark, ImVec4(1.f, 1.f, 1.f, 0.88f));
         ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.f, 1.f, 1.f, 0.88f));
     }
     else {
-        ImGui::PushStyleColor(ImGuiCol_Button,        to_ImVec4(decode_color_to_float_array(Accent::Base)));
-        ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(118.f / 255.f, 118.f / 255.f, 118.f / 255.f, 1.f));
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, to_ImVec4(decode_color_to_float_array(Accent::Hover)));
-        ImGui::PushStyleColor(ImGuiCol_ButtonActive,  to_ImVec4(decode_color_to_float_array(Accent::Base)));
+        ImGui::PushStyleColor(ImGuiCol_Button,        COL_ORCA);
+        ImGui::PushStyleColor(ImGuiCol_Border,        COL_ORCA);
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, COL_ORCA_HOVER);
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive,  COL_ORCA);
         ImGui::PushStyleColor(ImGuiCol_CheckMark, ImVec4(1.f, 1.f, 1.f, 1.f));
         ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.f, 1.f, 1.f, 1.f));
     }
@@ -2991,10 +3008,10 @@ void ImGuiWrapper::push_radio_style(const float scale)
 {
     ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(1.5f, 1.5f) * scale); // ORCA ensure icon size stays consistent
     if (m_is_dark_mode) {
-        ImGui::PushStyleColor(ImGuiCol_CheckMark, to_ImVec4(decode_color_to_float_array(Accent::Base))); // ORCA use orca color for radio buttons
+        ImGui::PushStyleColor(ImGuiCol_CheckMark, COL_ORCA); // ORCA use orca color for radio buttons
         ImGui::PushStyleColor(ImGuiCol_Border   , to_ImVec4(decode_color_to_float_array("#949494"))); // ORCA match border color
     } else {
-        ImGui::PushStyleColor(ImGuiCol_CheckMark, to_ImVec4(decode_color_to_float_array(Accent::Base))); // ORCA use orca color for radio buttons
+        ImGui::PushStyleColor(ImGuiCol_CheckMark, COL_ORCA); // ORCA use orca color for radio buttons
         ImGui::PushStyleColor(ImGuiCol_Border   , to_ImVec4(decode_color_to_float_array("#7C8282"))); // ORCA match border color
     }
 }
@@ -3708,7 +3725,7 @@ void ImGuiWrapper::sub_title(const std::string &label)
 
 bool IMTexture::load_from_svg_file(const std::string& filename, unsigned width, unsigned height, ImTextureID& texture_id)
 {
-    NSVGimage* image = nsvgParseFromFile(filename.c_str(), "px", 96.0f);
+    NSVGimage* image = BitmapCache::nsvgParseFromFileWithReplace(filename.c_str(), "px", 96.0f, {{"#009688", Accent::Base}});
     if (image == nullptr) {
         return false;
     }

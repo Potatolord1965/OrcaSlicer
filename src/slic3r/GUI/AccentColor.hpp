@@ -1,6 +1,7 @@
 #ifndef slic3r_GUI_AccentColor_hpp_
 #define slic3r_GUI_AccentColor_hpp_
 
+#include <string>
 #include <wx/colour.h>
 
 // Unlayered Slicer accent palette.
@@ -62,6 +63,18 @@ inline wxColour hover()   { return wxColour(Hover); }
 inline wxColour pressed() { return wxColour(Pressed); }
 inline wxColour tint25()  { return wxColour(Tint25); }
 inline wxColour tint10()  { return wxColour(Tint10); }
+
+// Brand accent of a printer vendor (the vendor profile name, e.g. "BBL"). Same colours as the
+// Device tab rail. Vendors without a brand colour return an invalid colour: neutral accent.
+inline wxColour brand_for_vendor(const std::string &vendor)
+{
+    if (vendor == "BBL")        return wxColour("#2FA84F");
+    if (vendor == "Elegoo")     return wxColour("#3A6FD8");
+    if (vendor == "Creality")   return wxColour("#D8762C");
+    if (vendor == "Markforged") return wxColour("#8B8F95");
+    if (vendor == "Unlayered")  return wxColour("#7A5CC4");
+    return wxColour();
+}
 
 }}} // namespace Slic3r::GUI::Accent
 
