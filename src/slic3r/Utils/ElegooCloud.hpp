@@ -153,6 +153,22 @@ public:
     void                            command(const std::string& serial, ElegooCommand cmd);
     // Ends the messaging session kept for live_status() (it logs out; blocking).
     void                            close_live_session();
+
+    // For ElegooSlicer's cloud printer page, which talks to the printer itself through the app.
+    // Every message the printer sends on the kept session goes to the listener (worker thread).
+    using RawMessageFn = std::function<void(const std::string& serial, const std::string& message)>;
+    void           set_raw_listener(RawMessageFn fn);
+    // Publishes a message to the printer as is (opens the kept session if needed), no wait.
+    void           send_raw(const std::string& serial, const std::string& message);
+    // The 1002 status result as the printer reports it.
+    nlohmann::json live_status_raw(const std::string& serial);
+    // Video call token for the camera: {rtcToken, userId, rtcTokenExpireTime}.
+    nlohmann::json rtc_token();
+    // Authenticated REST calls on the device API; return the reply's "data".
+    nlohmann::json api_get(const std::string& path_and_query);
+    nlohmann::json api_delete(const std::string& path_and_query);
+    // Signed download address of a stored object (thumbnails); empty when unavailable.
+    std::string    object_url(const std::string& object_name);
     void send(const boost::filesystem::path& file, const std::string& display_name, const std::string& serial,
               const ElegooPrintOptions& options, const ElegooProgressFn& progress);
 
@@ -187,6 +203,8 @@ private:
     // One RTM session per account at a time: the cloud allows a single messaging login.
     std::mutex                   m_rtm_mutex;
     std::unique_ptr<LiveSession> m_live; // guarded by m_rtm_mutex
+    std::mutex                   m_raw_mutex;
+    RawMessageFn                 m_raw_listener; // guarded by m_raw_mutex
 };
 
 // PrintHost that sends through ElegooCloud, so cloud jobs use the regular upload queue.

@@ -7,6 +7,7 @@
 #include <cstdio>
 #include <cstring>
 #include <map>
+#include <set>
 #include <sstream>
 #include <thread>
 
@@ -620,11 +621,23 @@ public:
         }
         const std::string msg = json{{"id", rid}, {"method", method}, {"params", params}}.dump();
         BOOST_LOG_TRIVIAL(info) << "ElegooCloud: RTM -> printer: " << msg.substr(0, 300);
-        m_rtm->publish_to_user(m_printer_user, msg);
+        if (need_reply) {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            m_pending.insert(rid);
+        }
+        try {
+            m_rtm->publish_to_user(m_printer_user, msg);
+        } catch (...) {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            m_pending.erase(rid);
+            throw;
+        }
         if (!need_reply)
             return {};
         std::unique_lock<std::mutex> lock(m_mutex);
-        if (!m_cond.wait_for(lock, std::chrono::seconds(timeout_s), [&] { return m_responses.count(rid) > 0; }))
+        const bool answered = m_cond.wait_for(lock, std::chrono::seconds(timeout_s), [&] { return m_responses.count(rid) > 0; });
+        m_pending.erase(rid);
+        if (!answered)
             throw ElegooCloudError("The printer did not answer method " + std::to_string(method) + " within " + std::to_string(timeout_s) +
                                    " s (is it online?)");
         json reply = std::move(m_responses[rid]);
@@ -647,6 +660,18 @@ public:
         m_download = json();
     }
 
+    // A message someone else composed (the printer page); its reply comes through the raw listener.
+    void publish_raw(const std::string& message)
+    {
+        BOOST_LOG_TRIVIAL(debug) << "ElegooCloud: RTM -> printer (page): " << message.substr(0, 300);
+        m_rtm->publish_to_user(m_printer_user, message);
+    }
+    void set_raw_listener(std::function<void(const std::string&)> fn)
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        m_raw = std::move(fn);
+    }
+
 private:
     void on_message(const std::string& publisher, const std::string& body)
     {
@@ -656,20 +681,28 @@ private:
         json j = json::parse(body, nullptr, false);
         if (!j.is_object())
             return;
-        std::lock_guard<std::mutex> lock(m_mutex);
-        if (j.value("method", 0) == M_DOWNLOAD_PROGRESS)
-            m_download = j.value("result", json::object());
-        else if (j.contains("id") && j["id"].is_number_integer())
-            m_responses[j["id"].get<int>()] = j;
-        m_cond.notify_all();
+        std::function<void(const std::string&)> raw;
+        {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            if (j.value("method", 0) == M_DOWNLOAD_PROGRESS)
+                m_download = j.value("result", json::object());
+            else if (j.contains("id") && j["id"].is_number_integer() && m_pending.count(j["id"].get<int>()) > 0)
+                m_responses[j["id"].get<int>()] = j;
+            m_cond.notify_all();
+            raw = m_raw;
+        }
+        if (raw && j.value("method", 0) != M_DOWNLOAD_PROGRESS) // as ElegooSlicer: progress is not passed on
+            raw(body);
     }
 
     std::string               m_printer_user;
     int                       m_next_id{0};
     std::mutex                m_mutex;
     std::condition_variable   m_cond;
+    std::set<int>             m_pending;
     std::map<int, json>       m_responses;
     json                      m_download;
+    std::function<void(const std::string&)> m_raw;
     // Last, so it is released first: its callbacks use the members above.
     std::unique_ptr<AgoraRtm> m_rtm;
 };
@@ -932,7 +965,7 @@ void ElegooCloud::save() const
 json ElegooCloud::request(const std::string& method, const std::string& path, const json* body, bool auth)
 {
     const std::string url = api_base() + path;
-    Http http = method == "POST" ? Http::post(url) : Http::get(url);
+    Http http = method == "POST" ? Http::post(url) : method == "DELETE" ? Http::del(url) : Http::get(url);
     http.header("User-Agent", user_agent()).header("Accept", "application/json").timeout_connect(15).timeout_max(30);
     if (auth)
         http.header("Authorization", "Bearer " + account().access_token);
@@ -1111,7 +1144,10 @@ static json agora_credential(ElegooCloud& cloud, const std::function<json(const 
     const json t = j.value("data", json::object()).value("agoraToken", json::object());
     json cred = {{"user_id", json_str(t.contains("userId") ? &t["userId"] : nullptr)},
                  {"rtm_user_id", json_str(t.contains("rtmUserId") ? &t["rtmUserId"] : nullptr)},
-                 {"rtm_token", t.value("rtmToken", "")}};
+                 {"rtm_token", t.value("rtmToken", "")},
+                 {"rtc_token", t.value("rtcToken", "")},
+                 {"rtc_user_id", json_str(t.contains("rtcUserId") ? &t["rtcUserId"] : nullptr)},
+                 {"rtc_expires_in", json_int(t.contains("rtcExpiresIn") ? &t["rtcExpiresIn"] : nullptr)}};
     if (cred["rtm_token"].get<std::string>().empty() || cred["rtm_user_id"].get<std::string>().empty())
         throw ElegooCloudError("Elegoo did not return a messaging token for this account.");
     return cred;
@@ -1154,7 +1190,16 @@ json ElegooCloud::live_request(const std::string& serial, int method, const json
             auto       live = std::make_unique<LiveSession>();
             live->serial    = serial;
             live->channel   = std::make_unique<PrinterChannel>(cred, serial, nullptr);
-            m_live          = std::move(live);
+            live->channel->set_raw_listener([this, serial](const std::string& message) {
+                RawMessageFn fn;
+                {
+                    std::lock_guard<std::mutex> lock(m_raw_mutex);
+                    fn = m_raw_listener;
+                }
+                if (fn)
+                    fn(serial, message);
+            });
+            m_live = std::move(live);
         }
         try {
             return m_live->channel->request(method, params, timeout_s);
@@ -1242,6 +1287,67 @@ void ElegooCloud::close_live_session()
 {
     std::lock_guard<std::mutex> rtm_lock(m_rtm_mutex);
     m_live.reset();
+}
+
+void ElegooCloud::set_raw_listener(RawMessageFn fn)
+{
+    std::lock_guard<std::mutex> lock(m_raw_mutex);
+    m_raw_listener = std::move(fn);
+}
+
+void ElegooCloud::send_raw(const std::string& serial, const std::string& message)
+{
+    std::lock_guard<std::mutex> rtm_lock(m_rtm_mutex);
+    if (!m_live || m_live->serial != serial || !m_live->channel)
+        live_request(serial, M_PRINTER_STATUS, json::object()); // opens the session (and checks the printer answers)
+    try {
+        m_live->channel->publish_raw(message);
+    } catch (const ElegooCloudError& e) {
+        BOOST_LOG_TRIVIAL(info) << "ElegooCloud: reopening the messaging session: " << e.what();
+        m_live.reset();
+        live_request(serial, M_PRINTER_STATUS, json::object());
+        m_live->channel->publish_raw(message);
+    }
+}
+
+json ElegooCloud::live_status_raw(const std::string& serial)
+{
+    std::lock_guard<std::mutex> rtm_lock(m_rtm_mutex);
+    return live_request(serial, M_PRINTER_STATUS, json::object()).value("result", json::object());
+}
+
+json ElegooCloud::rtc_token()
+{
+    const json cred = agora_credential(*this, [this](const std::string& p) { return call("GET", p); });
+    int64_t    exp  = cred.value("rtc_expires_in", int64_t(0));
+    if (exp > 0 && exp < 1000000000LL) // a duration, not a time
+        exp += now_ms() / 1000;
+    return json{{"rtcToken", cred.value("rtc_token", "")}, {"userId", cred.value("rtc_user_id", "")}, {"rtcTokenExpireTime", exp}};
+}
+
+json ElegooCloud::api_get(const std::string& path_and_query)
+{
+    return call("GET", "/api/v1/device-management-server/" + path_and_query).value("data", json());
+}
+
+json ElegooCloud::api_delete(const std::string& path_and_query)
+{
+    return call("DELETE", "/api/v1/device-management-server/" + path_and_query).value("data", json());
+}
+
+std::string ElegooCloud::object_url(const std::string& object_name)
+{
+    if (object_name.empty())
+        return {};
+    if (object_name.rfind("http", 0) == 0)
+        return object_name;
+    try {
+        const json d = api_get("oss/generate-pre-access-url?bucketAlias=iot-private&objectName=" + Http::url_encode(object_name));
+        return d.is_object() ? d.value("accessUrl", "") : std::string();
+    } catch (const ElegooCloudError& e) {
+        BOOST_LOG_TRIVIAL(info) << "ElegooCloud: no address for a stored file: " << e.what();
+        return {};
+    }
 }
 
 std::string ElegooCloud::upload_to_storage(const std::string& server_name, const fs::path& file, const std::string& md5_base64,

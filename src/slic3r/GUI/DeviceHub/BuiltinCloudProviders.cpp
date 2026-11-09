@@ -131,9 +131,12 @@ void BambuCloudProvider::refresh_printers(PrintersCallback done)
     for (const auto& [dev_id, obj] : machines) {
         if (obj == nullptr)
             continue;
-        // The Elegoo CC2 LAN plugin announces its printers through the same discovery list
-        // ("cc2-<ip>"); they belong to the Elegoo account, not Bambu Lab.
-        if (dev_id.rfind("cc2-", 0) == 0)
+        // The discovery list also holds every other brand's machines: the CC2 LAN plugin's
+        // ("cc2-<ip>") and the one a non-Bambu preset's host creates (keyed by that address, e.g.
+        // "10.0.0.45"). Only Bambu printers belong here; their ids are serial numbers, never addresses.
+        if (dev_id.rfind("cc2-", 0) == 0 || dev_id.find_first_of(".:") != std::string::npos)
+            continue;
+        if (!obj->printer_agent_id.empty() && obj->printer_agent_id != BBL_PRINTER_AGENT_ID)
             continue;
         CloudPrinter p;
         p.provider_id = id();
