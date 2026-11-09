@@ -4588,6 +4588,23 @@ void MainFrame::load_printer_url(wxString url, wxString apikey)
     wxQueueEvent(this, evt);
 }
 
+bool MainFrame::open_printer_web_ui(const std::string& host)
+{
+    m_tabpanel->SelectPageByName(TAB_ID_MONITOR);
+    if (!m_device_hub->select(DeviceHubPanel::PAGE_WEB))
+        return false;
+    DynamicPrintConfig cfg = wxGetApp().preset_bundle->printers.get_edited_preset().config;
+    if (!host.empty() && cfg.opt_string("print_host").empty()) {
+        cfg.opt_string("print_host") = host;
+        const wxString url = from_u8(PrintHost::get_print_host_webui(&cfg));
+        if (!url.empty())
+            load_printer_url(url, wxString());
+    } else {
+        load_printer_url();
+    }
+    return true;
+}
+
 void MainFrame::load_printer_url()
 {
     PresetBundle &preset_bundle = *wxGetApp().preset_bundle;

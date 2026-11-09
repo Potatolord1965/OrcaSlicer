@@ -123,6 +123,7 @@ public:
     void     logout() override;
 
     void refresh_printers(PrintersCallback done) override;
+    void open_printer(wxWindow* parent, const std::string& printer_id) override;
 };
 
 }} // namespace Slic3r::GUI
