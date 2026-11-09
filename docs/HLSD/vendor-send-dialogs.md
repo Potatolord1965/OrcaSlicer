@@ -16,6 +16,7 @@ When the selected printer comes from a vendor that has its own slicer app, **Pri
 - `Plater::send_to_vendor()`: builds the job summary (thumbnail, time, weight, layers, plate filaments), shows the dialog, then exports the G-code and runs the job through the regular upload queue, so progress and errors appear in the upload queue dialog like any other host upload. It returns false when the vendor has no backend, and the caller falls back to the regular flow.
 - `Utils/ElegooCloud.*`: native Elegoo cloud client and `ElegooCloudHost`, the `PrintHost` behind cloud jobs.
 - `GUI/ElegooLoginDialog.*`: Elegoo account sign-in.
+- `GUI/ElegooPrintSendDialog.*`: the Elegoo dialog. It hosts ElegooSlicer's own print-send page, copied with its scripts and styles into `resources/web/elegoo/` (AGPL, from ElegooSlicer 1.5.3), and answers the page's IPC requests the way ElegooSlicer's `PrintSendDialogEx` does (`request_printer_list`, `request_print_task`, `request_mms_info`, `get_current_bed_type`, `start_upload`, and the `cancel_print` / `expand_window` events), with the printers, Canvas slots and job of the Elegoo backend. Without a WebView runtime the built-in dialog is used.
 - `Utils/MarkforgedEiger.*`: Eiger REST client and `MarkforgedEigerHost`.
 - Creality Cloud jobs use `CrealityCloudHost` (in `VendorSendBackends.cpp`) over the `Utils/CrealityCloud` client: upload, the self-test flag, then `addSingleTask` with the CFS mapping. The session is the one the Creality Cloud account agent keeps (`CrealityCloud::SessionStore`).
 
@@ -34,6 +35,10 @@ Agora RTM is a proprietary runtime. It is never bundled: it is loaded at run tim
 Sign-in hosts the Elegoo account site's slicer login page, which reports the tokens back over the WebView bridge (`report.userInfo`). On Windows the dialog can also copy ElegooSlicer's saved sign-in. The account is stored in `<data_dir>/elegoo_cloud/account.dat`, encrypted with DPAPI on Windows and readable only by the user elsewhere.
 
 The cloud allows one messaging session per account, so RTM sessions are serialized with a mutex.
+
+### Cloud printer page
+
+A cloud printer opened on the Device tab (`GUI/ElegooCloudMonitor.*`) shows on the Elegoo page in place of the printer list. It hosts ElegooSlicer's cloud printer page from the user's ElegooSlicer install (`resources/plugins/elegoolink/web/cloud_service_web`, which ElegooSlicer downloads and which is not ours to ship), with the address and IPC replies of ElegooSlicer's printer view: printer id `cloud_<serial>`, events that carry that id, and the printer's full status as a 6000 message, with status pushes merged into it as elegoo-link does. Events wait until the page has loaded. Without ElegooSlicer, a built-in status view with pause, resume and stop is shown instead. Going back to the list ends the messaging session.
 
 ## Markforged Eiger
 

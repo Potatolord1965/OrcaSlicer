@@ -1,4 +1,5 @@
 #include "BuiltinCloudProviders.hpp"
+#include "DeviceHubPanel.hpp"
 
 #include <functional>
 #include <utility>
@@ -505,12 +506,19 @@ void ElegooCloudProvider::logout()
     clear_printers();
 }
 
+wxWindow* ElegooCloudProvider::create_page(wxWindow* parent)
+{
+    auto* page = new ElegooDevicePage(parent);
+    page->set_list_page(new CloudProviderPage(page->book(), CloudPrinterProviders::get(id())));
+    return page;
+}
+
 // The account's printers from the last cloud answer, shown while a new one is on its way.
 static std::mutex                s_elegoo_cloud_mutex;
 static std::vector<CloudPrinter> s_elegoo_cloud_printers;
 
-// A printer of the account (keyed by serial) opens the cloud monitor, like a Bambu cloud printer
-// opens the Device tab. A printer found on this network ("cc2-<ip>") opens its own web page on
+// A printer of the account (keyed by serial) opens ElegooSlicer's cloud printer page on the Elegoo
+// page of the Device tab, like a Bambu cloud printer opens the Device tab. A printer found on this network ("cc2-<ip>") opens its own web page on
 // the Device tab, which talks to it directly. The generic agent provider fell back to login()
 // here, so a double-click asked for the Elegoo sign-in again and never opened anything.
 void ElegooCloudProvider::open_printer(wxWindow* parent, const std::string& printer_id)

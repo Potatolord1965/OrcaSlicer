@@ -4,6 +4,7 @@
 #include <atomic>
 #include <cstdlib>
 #include <functional>
+#include <iterator>
 #include <map>
 #include <thread>
 #include <vector>
@@ -11,12 +12,14 @@
 #include <boost/algorithm/string/replace.hpp>
 #include <boost/filesystem.hpp>
 #include <boost/log/trivial.hpp>
+#include <boost/nowide/fstream.hpp>
 #include <nlohmann/json.hpp>
 
 #include <wx/button.h>
 #include <wx/dialog.h>
 #include <wx/gauge.h>
 #include <wx/msgdlg.h>
+#include <wx/simplebook.h>
 #include <wx/sizer.h>
 #include <wx/stattext.h>
 #include <wx/timer.h>
@@ -24,9 +27,15 @@
 #include <wx/weakref.h>
 #include <wx/webview.h>
 
+#include "DeviceHub/DeviceHubPanel.hpp"
 #include "GUI_App.hpp"
 #include "I18N.hpp"
+#include "Widgets/Button.hpp"
+#include "Widgets/Label.hpp"
 #include "Widgets/WebView.hpp"
+#include "libslic3r/AppConfig.hpp"
+#include "libslic3r/Utils.hpp"
+#include "slic3r/Utils/CloudProvider.hpp"
 #include "slic3r/Utils/ElegooCloud.hpp"
 #include "slic3r/Utils/Http.hpp"
 
@@ -61,12 +70,12 @@ wxString duration_text(int seconds)
     return h > 0 ? wxString::Format(_L("%dh %dm"), h, m) : wxString::Format(_L("%dm"), m);
 }
 
-class ElegooCloudMonitorDialog : public wxDialog
+// Built-in status and print controls, used when ElegooSlicer's page is not available.
+class ElegooCloudStatusView : public wxPanel
 {
 public:
-    ElegooCloudMonitorDialog(wxWindow* parent, const std::string& serial, const wxString& name)
-        : wxDialog(parent, wxID_ANY, name.empty() ? wxString("Elegoo") : name, wxDefaultPosition, wxDefaultSize,
-                   wxCAPTION | wxCLOSE_BOX | wxRESIZE_BORDER)
+    ElegooCloudStatusView(wxWindow* parent, const std::string& serial)
+        : wxPanel(parent, wxID_ANY)
         , m_serial(serial)
     {
         auto* top  = new wxBoxSizer(wxVERTICAL);
@@ -113,46 +122,39 @@ public:
         buttons->Add(m_pause, 0, wxRIGHT, FromDIP(8));
         buttons->Add(m_resume, 0, wxRIGHT, FromDIP(8));
         buttons->Add(m_stop, 0);
-        buttons->AddStretchSpacer();
-        auto* close = new wxButton(this, wxID_CLOSE, _L("Close"));
-        buttons->Add(close, 0);
         top->Add(buttons, 0, wxEXPAND | wxALL, pad);
 
         m_error = new wxStaticText(this, wxID_ANY, wxEmptyString);
         m_error->SetForegroundColour(wxColour("#D9534F"));
         top->Add(m_error, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, pad);
 
-        SetSizerAndFit(top);
-        SetMinSize(FromDIP(wxSize(420, -1)));
-        SetSize(FromDIP(wxSize(460, -1)).x, GetSize().y);
-        wxGetApp().UpdateDlgDarkUI(this);
-        CentreOnParent();
+        auto* outer = new wxBoxSizer(wxVERTICAL);
+        outer->Add(top, 0, wxALL, FromDIP(8));
+        SetSizer(outer);
         enable_controls(nullptr);
 
         m_pause->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) { send(ElegooCommand::Pause); });
         m_resume->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) { send(ElegooCommand::Resume); });
         m_stop->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) {
-            if (wxMessageBox(_L("Stop the current print? It cannot be resumed."), GetTitle(), wxYES_NO | wxICON_WARNING, this) == wxYES)
+            if (wxMessageBox(_L("Stop the current print? It cannot be resumed."), "Elegoo", wxYES_NO | wxICON_WARNING, this) == wxYES)
                 send(ElegooCommand::Stop);
-        });
-        close->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) { Close(); });
-        Bind(wxEVT_CLOSE_WINDOW, [this](wxCloseEvent&) {
-            *m_alive = false;
-            m_timer.Stop();
-            // Logging out of the messaging session blocks briefly; never on the GUI thread.
-            std::thread([]() { ElegooCloud::instance().close_live_session(); }).detach();
-            Destroy();
         });
         m_timer.Bind(wxEVT_TIMER, [this](wxTimerEvent&) { poll(); });
         m_timer.Start(POLL_MS);
         poll();
     }
 
-    const std::string& serial() const { return m_serial; }
+    ~ElegooCloudStatusView() override
+    {
+        *m_alive = false;
+        m_timer.Stop();
+    }
 
 private:
     void poll()
     {
+        if (!IsShownOnScreen() && m_polls > 0)
+            return; // another Device tab page is in front
         if (m_busy.exchange(true))
             return; // the last request is still out
         const bool        with_canvas = m_polls++ % CANVAS_EVERY == 0;
@@ -337,29 +339,41 @@ json parse_object(const json& v)
     return json::object();
 }
 
-// Hosts ElegooSlicer's cloud printer page and answers it the way ElegooSlicer does: the page talks
-// to the printer with its own messages, which the app relays over the account's Elegoo cloud
-// messaging session, and asks the app for lists the cloud keeps (files, print history, errors).
-class ElegooCloudPageDialog : public wxDialog
+// The printer id ElegooSlicer gives an Elegoo cloud printer (elegoo-link's "cloud_" prefix). The
+// page keys its requests and the events it accepts by it.
+std::string cloud_printer_id(const std::string& serial) { return "cloud_" + serial; }
+
+// The page whose listener receives the printer's messages (there is one listener slot).
+const void* s_listener_owner = nullptr;
+
+// Hosts ElegooSlicer's cloud printer page and answers it the way ElegooSlicer's printer view does
+// (ElegooPrinterWebView + PrinterManagerView): the same address parameters, the same IPC replies
+// and events, each event carrying the printer id. The page talks to the printer with its own
+// messages, which the app relays over the account's Elegoo cloud messaging session, and asks the
+// app for lists the cloud keeps (files, print history, errors).
+class ElegooCloudPageView : public wxPanel
 {
 public:
-    ElegooCloudPageDialog(wxWindow* parent, const std::string& serial, const wxString& name, const wxString& page)
-        : wxDialog(parent, wxID_ANY, name.empty() ? wxString("Elegoo") : name, wxDefaultPosition, wxDefaultSize,
-                   wxCAPTION | wxCLOSE_BOX | wxRESIZE_BORDER | wxMAXIMIZE_BOX | wxMINIMIZE_BOX)
-        , m_serial(serial)
+    ElegooCloudPageView(wxWindow* parent, const std::string& serial, const wxString& page)
+        : wxPanel(parent, wxID_ANY), m_serial(serial), m_printer_id(cloud_printer_id(serial))
     {
         auto* sizer = new wxBoxSizer(wxVERTICAL);
         m_browser   = WebView::CreateWebView(this, wxEmptyString);
         if (m_browser != nullptr) {
-            Bind(wxEVT_WEBVIEW_SCRIPT_MESSAGE_RECEIVED, &ElegooCloudPageDialog::on_script_message, this, m_browser->GetId());
+            Bind(wxEVT_WEBVIEW_SCRIPT_MESSAGE_RECEIVED, &ElegooCloudPageView::on_script_message, this, m_browser->GetId());
             Bind(wxEVT_WEBVIEW_NEWWINDOW, [](wxWebViewEvent& e) { wxLaunchDefaultBrowser(e.GetURL()); }, m_browser->GetId());
+            Bind(wxEVT_WEBVIEW_LOADED, &ElegooCloudPageView::on_loaded, this, m_browser->GetId());
+            m_browser->EnableAccessToDevTools(wxGetApp().app_config->get_bool("developer_mode"));
+            // ElegooSlicer's user script: links open in the system browser, and a reconnect button.
+            const std::string inject = read_text(fs::path(resources_dir()) / "web" / "elegoo" / "inject.js");
+            if (!inject.empty())
+                m_browser->AddUserScript(wxString::FromUTF8(inject));
             sizer->Add(m_browser, 1, wxEXPAND);
         }
         SetSizer(sizer);
-        SetSize(FromDIP(wxSize(1180, 800)));
-        CentreOnParent();
 
         auto alive = m_alive;
+        s_listener_owner = m_alive.get();
         ElegooCloud::instance().set_raw_listener([this, alive](const std::string& serial, const std::string& message) {
             wxGetApp().CallAfter([this, alive, serial, message]() {
                 if (*alive && serial == m_serial)
@@ -367,42 +381,58 @@ public:
             });
         });
 
-        Bind(wxEVT_CLOSE_WINDOW, [this](wxCloseEvent&) {
-            *m_alive = false;
-            m_timer.Stop();
-            ElegooCloud::instance().set_raw_listener(nullptr);
-            std::thread([]() { ElegooCloud::instance().close_live_session(); }).detach();
-            Destroy();
-        });
         m_timer.Bind(wxEVT_TIMER, [this](wxTimerEvent&) { poll(); });
         m_timer.Start(STATUS_MS);
 
-        wxString url = wxString("file:///") + page + "?id=" + wxString::FromUTF8(Http::url_encode(serial)) +
-                       "&sn=" + wxString::FromUTF8(Http::url_encode(serial)) + "&ip=&access_code=";
-        const std::string region = ElegooCloud::instance().region();
+        // The address ElegooSlicer builds for a Centauri Carbon 2 (PrinterManagerView::openPrinterTab).
+        auto enc = [](const std::string& v) { return wxString::FromUTF8(Http::url_encode(v)); };
+        wxString url = wxString("file:///") + page + "?id=" + enc(m_printer_id) + "&ip=&sn=" + enc(serial) + "&access_code=";
+        std::string region = wxGetApp().app_config->get("region");
+        if (ElegooCloud::instance().region() == "CN")
+            region = "China";
         if (!region.empty())
-            url += "&region=" + wxString::FromUTF8(Http::url_encode(region));
+            url += "&region=" + enc(region);
         const wxString lang = wxGetApp().current_language_code_safe();
         if (!lang.empty())
             url += "&lang=" + lang;
+        if (wxGetApp().app_config->get_bool("developer_mode"))
+            url += "&dev=true";
         m_url = url;
+        // Like ElegooSlicer, straight to the browser: WebView::LoadUrl would escape the address again.
         if (m_browser != nullptr)
-            WebView::LoadUrl(m_browser, m_url);
+            m_browser->LoadURL(m_url);
         poll();
     }
 
-    const std::string& serial() const { return m_serial; }
+    ~ElegooCloudPageView() override
+    {
+        *m_alive = false;
+        m_timer.Stop();
+        // A window closes later than it is replaced: leave a newer page's listener alone.
+        if (s_listener_owner == m_alive.get()) {
+            ElegooCloud::instance().set_raw_listener(nullptr);
+            s_listener_owner = nullptr;
+        }
+    }
 
 private:
     static constexpr int STATUS_MS = 3000;
 
+    static std::string read_text(const fs::path& path)
+    {
+        boost::nowide::ifstream in(path.string(), std::ios::binary);
+        return in ? std::string(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()) : std::string();
+    }
+
     void send_to_page(const json& msg)
     {
-        if (m_browser != nullptr)
-            WebView::RunScript(m_browser, wxString::FromUTF8("window.HandleStudio && window.HandleStudio(" + msg.dump() + ")"));
+        // Messages sent before the page has loaded would be lost: on_loaded() sends the state again.
+        if (m_browser != nullptr && m_loaded)
+            WebView::RunScript(m_browser, wxString::FromUTF8("window.HandleStudio && window.HandleStudio(" + msg.dump(-1, ' ', true) + ")"));
     }
-    void event(const std::string& method, const json& data)
+    void event(const std::string& method, json data)
     {
+        data["printerId"] = m_printer_id;
         send_to_page({{"id", "evt-" + std::to_string(++m_event_id)}, {"method", method}, {"type", "event"}, {"data", data}});
     }
     void respond(const json& id, const std::string& method, int code, const std::string& message, const json& data)
@@ -410,17 +440,42 @@ private:
         send_to_page({{"id", id}, {"method", method}, {"type", "response"}, {"code", code}, {"message", message}, {"data", data}});
     }
 
+    void on_loaded(wxWebViewEvent& evt)
+    {
+        evt.Skip();
+        if (!evt.GetURL().StartsWith("file:"))
+            return;
+        m_loaded = true;
+        if (m_connect_status >= 0)
+            event("onConnectionStatus", json{{"status", m_connect_status}});
+        send_status();
+    }
+
     void set_connected(int status)
     {
         if (status == m_connect_status)
             return;
         m_connect_status = status;
+        for (const json& id : m_pending_connect)
+            respond(id, "getConnectStatus", 0, "success", {{"printerId", m_printer_id}, {"connectStatus", status}});
+        m_pending_connect.clear();
         event("onConnectionStatus", json{{"status", status}});
     }
 
-    // Live status: ElegooSlicer gets it pushed by the cloud; here the printer is asked every few seconds.
+    // The printer's full status, in the form elegoo-link hands ElegooSlicer's page
+    // (ElegooFdmCC2MessageAdapter::wrapStatusData): a 6000 message whose result is the whole status.
+    void send_status()
+    {
+        if (m_last_status.is_object() && !m_last_status.empty())
+            event("onPrinterEventRaw", json{{"event", json{{"id", 0}, {"method", 6000}, {"result", m_last_status}}.dump()}});
+    }
+
+    // Live status: ElegooSlicer gets it pushed by the cloud; here the printer is also asked every
+    // few seconds, while the page is in front.
     void poll()
     {
+        if (m_last_status.is_object() && !m_last_status.empty() && !IsShownOnScreen())
+            return;
         if (m_polling.exchange(true))
             return;
         auto              alive  = m_alive;
@@ -437,14 +492,14 @@ private:
                 if (!*alive)
                     return;
                 m_polling = false;
-                if (!error.empty()) {
+                if (!error.empty() || !status.is_object()) {
                     BOOST_LOG_TRIVIAL(info) << "Elegoo cloud page: status not read: " << error;
                     set_connected(0);
                     return;
                 }
                 set_connected(1);
                 m_last_status = status;
-                event("onPrinterEventRaw", json{{"event", json{{"method", 6000}, {"result", status}}.dump()}});
+                send_status();
             });
         }).detach();
     }
@@ -452,9 +507,15 @@ private:
     void on_printer_message(const std::string& message)
     {
         event("onRtmMessage", json{{"message", message}});
+        // A status push carries only what changed: merge it into the full status, as elegoo-link does.
         const json j = json::parse(message, nullptr, false);
-        if (j.is_object() && j.value("method", 0) == 6000) // a status push from the printer itself
-            event("onPrinterEventRaw", json{{"event", message}});
+        if (j.is_object() && j.value("method", 0) == 6000 && j.contains("result") && j["result"].is_object()) {
+            if (!m_last_status.is_object())
+                m_last_status = json::object();
+            m_last_status.merge_patch(j["result"]);
+            set_connected(1);
+            send_status();
+        }
     }
 
     // Runs work off the GUI thread and answers the page with its result.
@@ -494,8 +555,10 @@ private:
                                    "&pageSize=" + std::to_string(params.value("pageSize", 10));
 
         if (method == "getConnectStatus") {
-            respond(id, method, 0, "success",
-                    {{"printerId", params.value("printerId", serial)}, {"connectStatus", m_connect_status < 0 ? 2 : m_connect_status}});
+            if (m_connect_status < 0)
+                m_pending_connect.push_back(id); // answered by the first status read
+            else
+                respond(id, method, 0, "success", {{"printerId", m_printer_id}, {"connectStatus", m_connect_status}});
         } else if (method == "sendRtmMessage") {
             const std::string message = params.value("message", "");
             answer_async(id, method, [serial, message]() {
@@ -611,8 +674,10 @@ private:
         } else if (method == "reload") {
             respond(id, method, 0, "success", json::object());
             CallAfter([this]() {
-                if (m_browser != nullptr)
-                    WebView::LoadUrl(m_browser, m_url);
+                if (m_browser != nullptr) {
+                    m_loaded = false;
+                    m_browser->LoadURL(m_url);
+                }
             });
         } else if (method == "printer_command_delivery" || method == "print_job_start") {
             respond(id, method, 0, "success", json::object()); // ElegooSlicer's usage reports; nothing to do here
@@ -623,45 +688,143 @@ private:
     }
 
     std::string           m_serial;
+    std::string           m_printer_id;
     wxString              m_url;
     wxWebView*            m_browser{nullptr};
+    bool                  m_loaded{false};
     std::shared_ptr<bool> m_alive{std::make_shared<bool>(true)};
     std::atomic<bool>     m_polling{false};
-    int                   m_connect_status{-1};
+    int                   m_connect_status{-1}; // -1 until the first status read
+    std::vector<json>     m_pending_connect;    // getConnectStatus requests waiting for it
     unsigned              m_event_id{0};
     json                  m_last_status;
     wxTimer               m_timer;
 };
 
-// One window at a time: the cloud allows one messaging session per account.
-wxWeakRef<wxDialog> s_open;
-std::string         s_open_serial;
+wxWindow* create_printer_view(wxWindow* parent, const std::string& serial)
+{
+    const wxString page = elegooslicer_cloud_page();
+#if wxUSE_WEBVIEW_EDGE
+    const bool webview_ok = !page.empty() && WebView::CheckWebViewRuntime();
+#else
+    const bool webview_ok = !page.empty();
+#endif
+    BOOST_LOG_TRIVIAL(info) << "Elegoo cloud printer page: "
+                            << (webview_ok ? "ElegooSlicer page" : page.empty() ? "built-in view (ElegooSlicer page not found)" : "built-in view (no WebView runtime)");
+    if (webview_ok)
+        return new ElegooCloudPageView(parent, serial, page);
+    return new ElegooCloudStatusView(parent, serial);
+}
+
+// Ends the account's messaging session once no printer page uses it. Logging out blocks briefly,
+// so never on the GUI thread.
+void close_session_later()
+{
+    std::thread([]() { ElegooCloud::instance().close_live_session(); }).detach();
+}
+
+// Used without a Device tab: one window at a time (the cloud allows one messaging session).
+wxWeakRef<wxDialog> s_window;
+std::string         s_window_serial;
 
 } // namespace
 
-void show_elegoo_cloud_monitor(wxWindow* parent, const std::string& serial, const wxString& name)
+ElegooDevicePage::ElegooDevicePage(wxWindow* parent) : wxPanel(parent, wxID_ANY)
 {
-    if (s_open) {
-        if (s_open_serial == serial) {
-            s_open->Raise();
+    auto* sizer = new wxBoxSizer(wxVERTICAL);
+    m_book      = new wxSimplebook(this, wxID_ANY);
+    sizer->Add(m_book, 1, wxEXPAND);
+    SetSizer(sizer);
+
+    m_printer_page = new wxPanel(m_book, wxID_ANY);
+    auto* page     = new wxBoxSizer(wxVERTICAL);
+    auto* header   = new wxBoxSizer(wxHORIZONTAL);
+    m_back         = new Button(m_printer_page, _L("Printers"));
+    m_back->SetStyle(ButtonStyle::Regular, ButtonType::Window);
+    m_back->SetToolTip(_L("Back to the list of printers"));
+    m_back->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) { show_list(); });
+    header->Add(m_back, 0, wxALIGN_CENTER_VERTICAL);
+    m_title = new wxStaticText(m_printer_page, wxID_ANY, wxEmptyString);
+    m_title->SetFont(Label::Head_16);
+    header->Add(m_title, 1, wxALIGN_CENTER_VERTICAL | wxLEFT, FromDIP(12));
+    page->Add(header, 0, wxEXPAND | wxALL, FromDIP(8));
+    m_printer_page->SetSizer(page);
+}
+
+wxWindow* ElegooDevicePage::book() const { return m_book; }
+
+void ElegooDevicePage::set_list_page(wxWindow* list_page)
+{
+    m_list = list_page;
+    m_book->InsertPage(0, list_page, wxEmptyString, true);
+    m_book->AddPage(m_printer_page, wxEmptyString, false);
+}
+
+void ElegooDevicePage::show_printer(const std::string& serial, const wxString& name)
+{
+    if (m_view == nullptr || serial != m_serial) {
+        if (m_view != nullptr) {
+            m_view->Destroy();
+            m_view = nullptr;
+        }
+        // The page outside the Device tab, if open, holds the messaging session.
+        if (s_window)
+            s_window->Destroy();
+        m_serial = serial;
+        m_view   = create_printer_view(m_printer_page, serial);
+        m_printer_page->GetSizer()->Add(m_view, 1, wxEXPAND);
+    }
+    m_title->SetLabel(name.empty() ? wxString::FromUTF8(serial) : name);
+    m_book->SetSelection(m_book->FindPage(m_printer_page));
+    m_printer_page->Layout();
+}
+
+void ElegooDevicePage::show_list()
+{
+    if (m_list != nullptr)
+        m_book->SetSelection(m_book->FindPage(m_list));
+    // Leaving the printer frees the account's messaging session for the send dialog and others.
+    if (m_view != nullptr) {
+        m_view->Destroy();
+        m_view = nullptr;
+        m_serial.clear();
+        close_session_later();
+    }
+}
+
+void show_elegoo_cloud_monitor(wxWindow* from, const std::string& serial, const wxString& name)
+{
+    // On the Device tab: show the printer on the Elegoo page, in place of the printer list.
+    for (wxWindow* w = from; w != nullptr && !w->IsTopLevel(); w = w->GetParent()) {
+        if (auto* hub = dynamic_cast<DeviceHubPanel*>(w); hub != nullptr && hub->select(ELEGOO_CLOUD_PROVIDER)) {
+            if (auto* page = dynamic_cast<ElegooDevicePage*>(hub->selected_page()); page != nullptr) {
+                page->show_printer(serial, name);
+                return;
+            }
+        }
+    }
+
+    if (s_window) {
+        if (s_window_serial == serial) {
+            s_window->Raise();
             return;
         }
-        s_open->Close();
+        s_window->Destroy();
     }
-    wxDialog*      dlg  = nullptr;
-    const wxString page = elegooslicer_cloud_page();
-#if wxUSE_WEBVIEW_EDGE
-    const bool webview_ok = WebView::CheckWebViewRuntime();
-#else
-    const bool webview_ok = true;
-#endif
-    if (!page.empty() && webview_ok)
-        dlg = new ElegooCloudPageDialog(parent, serial, name, page);
-    else
-        dlg = new ElegooCloudMonitorDialog(parent, serial, name);
-    BOOST_LOG_TRIVIAL(info) << "Elegoo cloud printer window: " << (page.empty() ? "built-in monitor (ElegooSlicer page not found)" : "ElegooSlicer page");
-    s_open        = dlg;
-    s_open_serial = serial;
+    auto* dlg = new wxDialog(from, wxID_ANY, name.empty() ? wxString("Elegoo") : name, wxDefaultPosition, wxDefaultSize,
+                             wxCAPTION | wxCLOSE_BOX | wxRESIZE_BORDER | wxMAXIMIZE_BOX | wxMINIMIZE_BOX);
+    auto* sizer = new wxBoxSizer(wxVERTICAL);
+    sizer->Add(create_printer_view(dlg, serial), 1, wxEXPAND);
+    dlg->SetSizer(sizer);
+    dlg->SetSize(dlg->FromDIP(wxSize(1180, 800)));
+    dlg->CentreOnParent();
+    wxGetApp().UpdateDlgDarkUI(dlg);
+    dlg->Bind(wxEVT_CLOSE_WINDOW, [dlg](wxCloseEvent&) {
+        dlg->Destroy();
+        close_session_later();
+    });
+    s_window        = dlg;
+    s_window_serial = serial;
     dlg->Show();
 }
 
