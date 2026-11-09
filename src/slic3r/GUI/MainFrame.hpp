@@ -433,6 +433,7 @@ public:
     void        load_config(const DynamicPrintConfig& config);
     //BBS: jump to monitor
     void        jump_to_monitor(std::string dev_id = "");
+    DeviceHubPanel* device_hub() const { return m_device_hub; }
     void        jump_to_multipage();
     //BBS: hint when jump to 3Deditor under preview only mode
     bool        preview_only_hint();

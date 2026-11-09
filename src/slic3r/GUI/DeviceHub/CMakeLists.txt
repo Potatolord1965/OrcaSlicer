@@ -7,5 +7,7 @@ list(APPEND SLIC3R_GUI_SOURCES
     GUI/DeviceHub/CloudPrinterProviderList.cpp
     GUI/DeviceHub/DeviceHubPanel.hpp
     GUI/DeviceHub/DeviceHubPanel.cpp
+    GUI/DeviceHub/LocalPrintersProvider.hpp
+    GUI/DeviceHub/LocalPrintersProvider.cpp
 )
 set(SLIC3R_GUI_SOURCES ${SLIC3R_GUI_SOURCES} PARENT_SCOPE)

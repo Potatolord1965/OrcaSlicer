@@ -1,5 +1,6 @@
 #include "BuiltinCloudProviders.hpp"
 #include "CloudPrinterProvider.hpp"
+#include "LocalPrintersProvider.hpp"
 
 #include <memory>
 
@@ -24,6 +25,8 @@ void CloudPrinterProviders::register_builtin()
                                                     wxColour("#D8762C")));
     // Markforged: Eiger cloud agent "markforged_eiger", API keys.
     add(std::make_shared<MarkforgedCloudProvider>());
+    // USB & LAN: print-host presets (OctoPrint, Moonraker, ...) and USB printers no service claims.
+    add(std::make_shared<LocalPrintersProvider>());
 }
 
 }} // namespace Slic3r::GUI

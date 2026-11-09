@@ -67,7 +67,10 @@ public:
     virtual wxString unavailable_reason() const { return {}; }
     virtual void     install_or_enable(wxWindow* /*parent*/) {}
 
-    // Account. Each provider keeps its own login, independent of the others.
+    // Account. Each provider keeps its own login, independent of the others. A provider without
+    // one (has_account() false) shows account_name() as the page's subtitle, and its primary
+    // button runs login() as "Add printer".
+    virtual bool     has_account() const { return true; }
     virtual bool     is_logged_in() const = 0;
     virtual wxString account_name() const { return {}; }
     virtual void     login(wxWindow* parent) = 0;
