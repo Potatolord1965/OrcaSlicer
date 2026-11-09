@@ -30,6 +30,7 @@
 #include "slic3r/Utils/MarkforgedEiger.hpp"
 #include "slic3r/GUI/ElegooLoginDialog.hpp"
 #include <wx/utils.h>
+#include <atomic>
 #include <mutex>
 #include <thread>
 #include "slic3r/Utils/ICloudServiceAgent.hpp"
@@ -531,6 +532,9 @@ void ElegooCloudProvider::open_printer(wxWindow* parent, const std::string& prin
 // The account's printers from the last cloud answer, shown while a new one is on its way.
 static std::mutex                s_elegoo_cloud_mutex;
 static std::vector<CloudPrinter> s_elegoo_cloud_printers;
+// One account fetch at a time: the page polls every few seconds, and on a slow connection a
+// fetch outlasts that; overlapping fetches would pile up and could answer out of order.
+static std::atomic<bool>         s_elegoo_cloud_fetching{false};
 
 static std::vector<CloudPrinter> merge_lan(std::vector<CloudPrinter> out, const std::vector<CloudPrinter>& lan)
 {
@@ -560,6 +564,8 @@ void ElegooCloudProvider::refresh_printers(PrintersCallback done)
         std::lock_guard<std::mutex> lock(s_elegoo_cloud_mutex);
         done(merge_lan(s_elegoo_cloud_printers, lan), {});
     }
+    if (s_elegoo_cloud_fetching.exchange(true))
+        return; // the fetch in flight answers with fresh data
     // The account's printers: blocking HTTPS, so off the GUI thread (the caller marshals the callback).
     const std::string provider = id();
     std::thread([done, lan = std::move(lan), provider]() {
@@ -595,6 +601,7 @@ void ElegooCloudProvider::refresh_printers(PrintersCallback done)
                 c.status = _L("Unknown");
             }
         }
+        s_elegoo_cloud_fetching = false;
         done(merge_lan(std::move(out), lan), error);
     }).detach();
 }

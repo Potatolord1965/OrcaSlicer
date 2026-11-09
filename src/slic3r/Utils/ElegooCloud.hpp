@@ -142,6 +142,7 @@ private:
     nlohmann::json call(const std::string& method, const std::string& path, const nlohmann::json* body = nullptr);
     void           ensure_token();
     void           refresh();
+    void           sign_out_if_unchanged(const std::string& access_token);
     // Checks the sign-in and fills in the nickname and email from the account profile.
     void           load_profile();
     void           load();
@@ -151,6 +152,8 @@ private:
     nlohmann::json file_detail(const std::string& serial, const std::string& filename);
 
     mutable std::recursive_mutex m_mutex;
+    // Serializes token refreshes; m_mutex is never held across a network call.
+    std::mutex m_refresh_mutex;
     ElegooCloudAccount           m_account;
     // One RTM session per account at a time: the cloud allows a single messaging login.
     std::mutex m_rtm_mutex;

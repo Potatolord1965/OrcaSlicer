@@ -11,6 +11,7 @@
 #include <boost/log/trivial.hpp>
 #include <boost/nowide/fstream.hpp>
 
+#include <wx/app.h>
 #include <wx/string.h>
 #include <wx/utils.h>
 
@@ -280,7 +281,9 @@ bool MarkforgedEigerHost::upload(PrintHostUpload u, ProgressFn progress_fn, Erro
             }
         }
         if (build_id.empty()) {
-            wxLaunchDefaultBrowser(EIGER_WEB);
+            // This runs on the upload thread; wx may only open the browser from the UI thread.
+            if (wxTheApp != nullptr)
+                wxTheApp->CallAfter([] { wxLaunchDefaultBrowser(EIGER_WEB); });
             throw std::runtime_error(_u8L("Eiger sliced the part but made no build for it. Add the part to a build in Eiger to print it."));
         }
 
