@@ -17,6 +17,7 @@ function OnInit()
 	SendMsg_GetStaffPick();
 
 	Set_AccountMenu_Event();
+	InitNavCollapsed();
 }
 
 //------最佳打开文件的右键菜单功能----------
@@ -102,7 +103,7 @@ function Set_RecentFile_MouseRightBtn_Event()
 
 function SetLoginPanelVisibility(visible) {
   var leftBoard = document.getElementById("LeftBoard");
-  leftBoard.style.display = "block";
+  leftBoard.style.display = "flex";
 }
 
 function HandleStudio( pVal )
@@ -136,7 +137,7 @@ function HandleStudio( pVal )
     }
 
     // The nav column always shows: it carries the model-site tabs even without Orca Cloud.
-    $("#LeftBoard").show();
+    $("#LeftBoard").css("display", "flex");
     let bOrca = providers.indexOf("orca") >= 0;
     $("#OrcaAccount").toggle(bOrca);
     $(".BtnItem[menu='orca_cloud']").toggle(bOrca);
@@ -209,6 +210,38 @@ function SetCloudMode( bOn )
 function SetModelSiteMode( strSite )
 {
 	SetPaneMenu(strSite ? "site_"+strSite : "");
+}
+
+/*------Collapsible nav column------*/
+var NAV_COLLAPSED_KEY = "UnifiedHome_NavCollapsed";
+
+function InitNavCollapsed()
+{
+	let bCollapsed = false;
+	try { bCollapsed = localStorage.getItem(NAV_COLLAPSED_KEY) == "1"; } catch (e) {}
+	SetNavCollapsed(bCollapsed);
+}
+
+// Shrinks the column to its icons, or restores it. The app is told the new width, because it
+// sizes this page to the column while a native pane (OrcaCloud, a model site) is open beside it.
+function SetNavCollapsed( bCollapsed )
+{
+	$("body").toggleClass("nav-collapsed", bCollapsed);
+	let btn = $("#NavCollapseBtn");
+	btn.attr("aria-expanded", bCollapsed ? "false" : "true");
+	btn.attr("title", bCollapsed ? T("expand_sidebar", "Expand sidebar") : T("collapse_sidebar", "Collapse sidebar"));
+	try { localStorage.setItem(NAV_COLLAPSED_KEY, bCollapsed ? "1" : "0"); } catch (e) {}
+
+	var tSend={};
+	tSend['sequence_id']=Math.round(new Date() / 1000);
+	tSend['command']="homepage_nav_collapsed";
+	tSend['data']={ collapsed: bCollapsed };
+	SendWXMessage( JSON.stringify(tSend) );
+}
+
+function ToggleNavCollapsed()
+{
+	SetNavCollapsed(!$("body").hasClass("nav-collapsed"));
 }
 
 function GotoCloud()
@@ -373,7 +406,7 @@ function Set_AccountMenu_Event() {
   });
 
   /*----Enter and Space activate the div-based buttons of this panel----*/
-  $(document).on("keydown", "#LoginArea [role=button], #LoginArea [role=menuitem]", function (e) {
+  $(document).on("keydown", "#LoginArea [role=button], #LoginArea [role=menuitem], #NavCollapseBtn", function (e) {
     if (e.key !== "Enter" && e.key !== " " && e.key !== "Spacebar") return;
     e.preventDefault();
     this.click();

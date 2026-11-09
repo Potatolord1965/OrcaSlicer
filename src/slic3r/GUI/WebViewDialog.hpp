@@ -11,6 +11,7 @@
 #include <wx/event.h>
 #include <string>
 #include <functional>
+#include <map>
 #include <wx/dialog.h>
 #include <wx/accel.h>
 #include <wx/webview.h>
@@ -40,6 +41,8 @@ namespace Slic3r {
 class NetworkAgent;
 
 namespace GUI {
+
+class ModelSiteView;
 
 
 class WebViewPanel : public wxPanel, public LazyInstance<WebViewPanel>
@@ -140,7 +143,15 @@ public:
     void set_model_site(const std::string& site);
 
     // Id of the model site shown in the pane, or empty while the pane is hidden.
-    std::string model_site() const { return m_model_browser && m_model_browser->IsShown() ? m_model_site : std::string(); }
+    std::string model_site() const { return shown_model_view() != nullptr ? m_model_site : std::string(); }
+
+    // Creates every model-site view and loads it in the background (once), so opening a model tab
+    // shows a page that is already loaded. Started when the homepage has loaded.
+    void preload_model_sites();
+
+    // The homepage nav column was collapsed to its icons or expanded again; while a side pane is
+    // open the homepage is sized to that column, so the layout follows.
+    void set_nav_collapsed(bool collapsed);
 
     bool Show(bool show = true) override;
 private:
@@ -165,14 +176,18 @@ private:
     void clear_cloud_storage();
     // Re-applies the content sizer's proportions and min sizes for the cloud state.
     void apply_cloud_layout(bool cloud_on);
-    void create_model_browser();
-    // Consumes the model-site pane's webview events and diverts model downloads to the importer.
-    void OnModelWebViewEvent(wxWebViewEvent& evt);
+    // The view of `site`, created hidden in the content sizer when `create` and it does not exist.
+    ModelSiteView* model_view(const std::string& site, bool create);
+    ModelSiteView* shown_model_view() const;
 
     wxWebView* m_browser;
     wxWebView* m_cloud_browser{nullptr};
-    wxWebView* m_model_browser{nullptr};
+    // One view per model site, keyed by site id (ModelSiteView::sites()).
+    std::map<std::string, ModelSiteView*> m_model_views;
+    bool m_model_preload_started{false};
+    wxTimer* m_preload_timer{nullptr};
     std::string m_model_site;
+    bool m_nav_collapsed{false};
     wxBoxSizer* m_content_sizer{nullptr};
     wxString m_home_url;
     bool m_reset_on_show{false};

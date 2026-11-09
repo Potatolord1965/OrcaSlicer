@@ -86,16 +86,19 @@
 	</div>
 
 	<div id="BtnArea">
-		<div menu="recent" class="BtnItem BtnItemSelected" onClick="GotoMenu('recent')">
-			<div data-i18n="recent">Recent</div>
+		<div menu="recent" class="BtnItem BtnItemSelected" title="Recent" data-i18n-title="recent" onClick="GotoMenu('recent')">
+			<div class="NavIcon icon20 IconRecent"></div>
+			<div class="BtnLabel" data-i18n="recent">Recent</div>
 			<div class="NavArrow icon16"></div>
 		</div>
-		<div menu="orca_cloud" class="BtnItem" onClick="GotoCloud()">
-			<div>OrcaCloud</div>
+		<div menu="orca_cloud" class="BtnItem" title="OrcaCloud" onClick="GotoCloud()">
+			<div class="NavIcon icon20 IconCloud"></div>
+			<div class="BtnLabel">OrcaCloud</div>
 			<div class="NavArrow icon16"></div>
 		</div>
-		<div class="BtnItem" onClick="OpenUrlInLocalBrowser('https://orcaslicer.com/wiki')">
-			<div>Wiki</div>
+		<div class="BtnItem" title="Wiki" onClick="OpenUrlInLocalBrowser('https://orcaslicer.com/wiki')">
+			<div class="NavIcon icon20 IconWiki"></div>
+			<div class="BtnLabel">Wiki</div>
 			<div class="ShortcutIcon icon16"></div>
 		</div>
 	</div>
@@ -104,22 +107,33 @@
 	     Downloads and "Open in slicer" links in that pane are imported into the plater. -->
 	<div id="ModelSiteArea">
 		<div class="NavSectionTitle" data-i18n="models">Models</div>
-		<div menu="site_unlayered" class="BtnItem" onClick="GotoModelSite('unlayered')">
-			<div>Unlayered Universe</div>
+		<div menu="site_unlayered" class="BtnItem" title="Unlayered Universe" onClick="GotoModelSite('unlayered')">
+			<div class="SiteBadge SiteUnlayered">U</div>
+			<div class="BtnLabel">Unlayered Universe</div>
 			<div class="NavArrow icon16"></div>
 		</div>
-		<div menu="site_makerworld" class="BtnItem" onClick="GotoModelSite('makerworld')">
-			<div>MakerWorld</div>
+		<div menu="site_makerworld" class="BtnItem" title="MakerWorld" onClick="GotoModelSite('makerworld')">
+			<div class="SiteBadge SiteMakerWorld">M</div>
+			<div class="BtnLabel">MakerWorld</div>
 			<div class="NavArrow icon16"></div>
 		</div>
-		<div menu="site_nexprint" class="BtnItem" onClick="GotoModelSite('nexprint')">
-			<div>Nexprint</div>
+		<div menu="site_nexprint" class="BtnItem" title="Nexprint" onClick="GotoModelSite('nexprint')">
+			<div class="SiteBadge SiteNexprint">N</div>
+			<div class="BtnLabel">Nexprint</div>
 			<div class="NavArrow icon16"></div>
 		</div>
-		<div menu="site_thingiverse" class="BtnItem" onClick="GotoModelSite('thingiverse')">
-			<div>Thingiverse</div>
+		<div menu="site_thingiverse" class="BtnItem" title="Thingiverse" onClick="GotoModelSite('thingiverse')">
+			<div class="SiteBadge SiteThingiverse">T</div>
+			<div class="BtnLabel">Thingiverse</div>
 			<div class="NavArrow icon16"></div>
 		</div>
+	</div>
+
+	<!-- Collapses the column to its icons (ToggleNavCollapsed in js/home.js). -->
+	<div id="NavCollapseBtn" class="BtnItem" tabindex="0" role="button" aria-expanded="true"
+		 title="Collapse sidebar" onClick="ToggleNavCollapsed()">
+		<div class="NavIcon icon20 IconCollapse"></div>
+		<div class="BtnLabel" data-i18n="collapse_sidebar">Collapse sidebar</div>
 	</div>
 </div>
 

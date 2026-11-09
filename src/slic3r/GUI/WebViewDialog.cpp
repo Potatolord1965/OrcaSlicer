@@ -22,6 +22,7 @@
 #include "libslic3r/Config.hpp"
 #include "slic3r/Utils/NetworkAgent.hpp"
 #include "Plater.hpp"
+#include "ModelSiteView.hpp"
 #include <wx/filefn.h>
 #include <wx/filename.h>
 #include <sstream>
@@ -73,6 +74,8 @@ static const char *const kCloudUrl = "https://cloud.orcaslicer.com";
 // #LeftBoard in resources/web/homepage/css/home.css is a 262px column plus a 1px right
 // border; the homepage keeps that width as the nav column while the cloud pane is open.
 static const int kLeftNavWidth = 220 + 1; // 1px border
+// The same column collapsed to its icons (body.nav-collapsed #LeftBoard).
+static const int kLeftNavCollapsedWidth = 56 + 1;
 
 // The home page's strings (resources/web/homepage), keyed by their data-i18n and T() ids.
 static json home_page_strings()
@@ -87,6 +90,10 @@ static json home_page_strings()
         {"recent", _u8L("Recent")},
         // TRN Homepage nav heading above the model-site tabs (MakerWorld, Thingiverse, ...).
         {"models", _u8L("Models")},
+        // TRN Homepage nav button that shrinks the left column to its icons.
+        {"collapse_sidebar", _u8L("Collapse sidebar")},
+        // TRN Tooltip of the same button while the column shows only icons.
+        {"expand_sidebar", _u8L("Expand sidebar")},
         {"new_project", _u8L("New Project")},
         {"create_new_project", _u8L("Create new project")},
         {"open_project", _u8L("Open Project")},
@@ -299,6 +306,11 @@ WebViewPanel::~WebViewPanel()
     
     delete m_tools_menu;
 
+    if (m_preload_timer != nullptr) {
+        m_preload_timer->Stop();
+        delete m_preload_timer;
+        m_preload_timer = nullptr;
+    }
     if (m_LoginUpdateTimer != nullptr) {
         m_LoginUpdateTimer->Stop();
         delete m_LoginUpdateTimer;
@@ -450,120 +462,69 @@ void WebViewPanel::apply_cloud_layout(bool cloud_on)
         return;
 
     // The model-site pane uses the same side-by-side layout as the cloud pane.
-    cloud_on = cloud_on || (m_model_browser && m_model_browser->IsShown());
+    cloud_on = cloud_on || shown_model_view() != nullptr;
     // Cloud mode pins the homepage to the nav column width; otherwise it fills the panel.
     if (m_browser) {
         if (wxSizerItem* item = m_content_sizer->GetItem(m_browser))
             item->SetProportion(cloud_on ? 0 : 1);
         // kLeftNavWidth is in DIP: the web view's CSS px are DIP, so scale to physical pixels.
-        m_browser->SetMinSize(cloud_on ? m_browser->FromDIP(wxSize(kLeftNavWidth, -1)) : wxDefaultSize);
+        const int nav_width = m_nav_collapsed ? kLeftNavCollapsedWidth : kLeftNavWidth;
+        m_browser->SetMinSize(cloud_on ? m_browser->FromDIP(wxSize(nav_width, -1)) : wxDefaultSize);
+        m_browser->SetMaxSize(cloud_on ? m_browser->FromDIP(wxSize(nav_width, -1)) : wxDefaultSize);
     }
     Layout();
 }
 
-// Home pages of the model sites the homepage nav offers, keyed by the id home.js sends.
-// Unlayered Universe has no public catalog yet; its page is the launch / sign-up page.
-static wxString model_site_url(const std::string& site)
+ModelSiteView* WebViewPanel::model_view(const std::string& site, bool create)
 {
-    if (site == "unlayered")   return "https://unlayered3d.com/universe";
-    if (site == "makerworld")  return "https://makerworld.com";
-    if (site == "nexprint")    return "https://www.nexprint.com";
-    if (site == "thingiverse") return "https://www.thingiverse.com";
-    return {};
-}
-
-// "Open in slicer" links the model sites emit (MakerWorld → bambustudio, Thingiverse → cura,
-// Printables → prusaslicer, Nexprint → elegooslicer). Downloader::start_download handles each.
-static bool is_slicer_open_url(const wxString& url)
-{
-    const std::string u = url.Lower().utf8_string();
-    for (const char* scheme : {"orcaslicer://", "prusaslicer://", "bambustudio://", "bambustudioopen://", "cura://", "elegooslicer://"})
-        if (boost::starts_with(u, scheme))
-            return true;
-    return false;
-}
-
-// A direct link to a model file (or a Thingiverse download / zip endpoint), which the pane
-// imports instead of letting the webview save it to the Downloads folder.
-static bool is_model_file_url(const wxString& url)
-{
-    const wxURI uri(url);
-    const wxString scheme = uri.GetScheme().Lower();
-    if (scheme != "http" && scheme != "https")
-        return false;
-    const std::string path = uri.GetPath().Lower().utf8_string();
-    for (const char* ext : {".3mf", ".stl", ".step", ".stp", ".obj", ".amf", ".zip"})
-        if (boost::ends_with(path, ext))
-            return true;
-    const std::string host = uri.GetServer().Lower().utf8_string();
-    if (host == "www.thingiverse.com" || host == "thingiverse.com")
-        return boost::starts_with(path, "/download:") || boost::ends_with(path, "/zip");
-    return false;
-}
-
-// Hands a model link to the URL downloader, which saves it to the download folder and loads it
-// into the plater. Deferred: this runs inside a native webview navigation callback.
-static void import_model_url(const wxString& url)
-{
-    std::string link = url.utf8_string();
-    if (!is_slicer_open_url(url))
-        link = "orcaslicer://open?file=" + Http::url_encode(link);
-    BOOST_LOG_TRIVIAL(info) << "model site pane: importing " << WebView::RedactUrl(url).ToUTF8().data();
-    wxGetApp().CallAfter([link] { wxGetApp().start_download(link); });
-}
-
-void WebViewPanel::create_model_browser()
-{
-    m_model_browser = WebView::CreateWebView(this, wxEmptyString);
-
-#ifdef __linux__
-    // Keep the sites' sign-ins across restarts, as the cloud pane does (see create_cloud_browser).
-    if (auto* wv = static_cast<WebKitWebView*>(m_model_browser->GetNativeBackend())) {
-        const auto cookies_path = boost::filesystem::path(data_dir() + "/cache/model_site_cookies.db");
-        auto*      cookie_manager = webkit_web_context_get_cookie_manager(webkit_web_view_get_context(wv));
-        webkit_cookie_manager_set_persistent_storage(cookie_manager, cookies_path.c_str(),
-                                                     WEBKIT_COOKIE_PERSISTENT_STORAGE_SQLITE);
-    }
-#endif
-
-    // Keep the pane's events off the homepage handlers (webview events are command events).
-    for (const auto& type : {wxEVT_WEBVIEW_NAVIGATING, wxEVT_WEBVIEW_NAVIGATED, wxEVT_WEBVIEW_LOADED,
-                                   wxEVT_WEBVIEW_TITLE_CHANGED, wxEVT_WEBVIEW_ERROR, wxEVT_WEBVIEW_NEWWINDOW,
-                                   wxEVT_WEBVIEW_SCRIPT_MESSAGE_RECEIVED})
-        m_model_browser->Bind(type, &WebViewPanel::OnModelWebViewEvent, this);
-
-    m_model_browser->Hide();
+    if (auto it = m_model_views.find(site); it != m_model_views.end())
+        return it->second;
+    if (!create || !ModelSiteView::is_site(site))
+        return nullptr;
+    auto* view = new ModelSiteView(this, site);
+    view->Hide();
     if (m_content_sizer)
-        m_content_sizer->Add(m_model_browser, wxSizerFlags().Expand().Proportion(1));
+        m_content_sizer->Add(view, wxSizerFlags().Expand().Proportion(1));
+    m_model_views[site] = view;
+    return view;
 }
 
-// Model files and "Open in slicer" links are imported; every other page stays in the pane, so
-// the user can browse and sign in to the site there. Pop-ups load in the pane too.
-void WebViewPanel::OnModelWebViewEvent(wxWebViewEvent& evt)
+ModelSiteView* WebViewPanel::shown_model_view() const
 {
-    const wxEventType event_type = evt.GetEventType();
-    if (event_type == wxEVT_WEBVIEW_NAVIGATING) {
-        const wxString url = evt.GetURL();
-        if (is_slicer_open_url(url) || is_model_file_url(url)) {
-            evt.Veto();
-            import_model_url(url);
+    for (const auto& [site, view] : m_model_views)
+        if (view->IsShown())
+            return view;
+    return nullptr;
+}
+
+void WebViewPanel::preload_model_sites()
+{
+    if (m_model_preload_started)
+        return;
+    m_model_preload_started = true;
+    // Each site gets its own hidden view, loaded in the background, so opening a model tab shows a
+    // page that is already there. One site per tick, so they do not all start with the homepage.
+    m_preload_timer = new wxTimer(this, wxWindow::NewControlId());
+    Bind(wxEVT_TIMER, [this](wxTimerEvent&) {
+        for (const std::string& site : ModelSiteView::sites()) {
+            ModelSiteView* view = model_view(site, true);
+            if (view != nullptr && !view->loaded()) {
+                view->load_home();
+                return;
+            }
         }
-    } else if (event_type == wxEVT_WEBVIEW_NEWWINDOW) {
-        const wxString url = evt.GetURL();
-        evt.Veto();
-        if (is_slicer_open_url(url) || is_model_file_url(url))
-            import_model_url(url);
-        else if (url.StartsWith("http://") || url.StartsWith("https://"))
-            m_model_browser->CallAfter([this, url] { m_model_browser->LoadURL(url); });
-    }
+        m_preload_timer->Stop();
+    }, m_preload_timer->GetId());
+    m_preload_timer->Start(800);
 }
 
 void WebViewPanel::set_model_site(const std::string& site)
 {
-    const wxString url = model_site_url(site);
-    if (url.empty()) {
-        if (m_model_browser)
-            m_model_browser->Hide();
+    ModelSiteView* view = ModelSiteView::is_site(site) ? model_view(site, true) : nullptr;
+    for (auto& [id, other] : m_model_views)
+        if (other != view)
+            other->Hide();
+    if (view == nullptr) {
         m_model_site.clear();
         apply_cloud_layout(cloud_mode_active());
         return;
@@ -573,15 +534,10 @@ void WebViewPanel::set_model_site(const std::string& site)
     if (m_cloud_browser)
         m_cloud_browser->Hide();
 
-    if (!m_model_browser) {
-        create_model_browser();
-        // Deferred like the cloud pane's first load, so CreateWebView's setup runs first.
-        m_model_browser->CallAfter([this, url] { m_model_browser->LoadURL(url); });
-    } else if (site != m_model_site) {
-        m_model_browser->LoadURL(url);
-    }
+    if (!view->loaded())
+        view->load_home();
     m_model_site = site;
-    m_model_browser->Show();
+    view->Show();
     RunScript(wxString::Format("SetModelSiteMode('%s')", wxString::FromUTF8(site)));
     apply_cloud_layout(true);
 }
@@ -696,8 +652,8 @@ void WebViewPanel::set_cloud_mode(bool on, const wxString& url, const wxString& 
             load_cloud_after_signout(url);
         }
         // One side pane at a time.
-        if (m_model_browser)
-            m_model_browser->Hide();
+        for (auto& [site, view] : m_model_views)
+            view->Hide();
         m_cloud_browser->Show();
         // The homepage shell owns the nav highlight and the cloud-mode layout class. A native open
         // (not the page's own GotoCloud) must ask it to switch; the page's SetCloudMode no-ops if it
@@ -1152,6 +1108,8 @@ void WebViewPanel::OnDocumentLoaded(wxWebViewEvent& evt)
         RunScript(wxString::Format("SetModelSiteMode('%s')", wxString::FromUTF8(model_site())));
     UpdateState();
     SendCloudProvidersInfo();
+    // The homepage is up: start loading the model sites behind it.
+    preload_model_sites();
 }
 
 void WebViewPanel::OnTitleChanged(wxWebViewEvent &evt)

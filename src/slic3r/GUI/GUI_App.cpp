@@ -5778,6 +5778,15 @@ std::string GUI_App::handle_web_request(std::string cmd)
                         home->set_model_site(site);
                 });
             }
+            else if (command_str.compare("homepage_nav_collapsed") == 0) {
+                bool collapsed = false;
+                if (auto data = root.get_child_optional("data"))
+                    collapsed = data->get<bool>("collapsed", false);
+                CallAfter([collapsed]() {
+                    if (WebViewPanel* home = WebViewPanel::if_built())
+                        home->set_nav_collapsed(collapsed);
+                });
+            }
             else if (command_str.compare("homepage_close_model_site") == 0) {
                 CallAfter([]() {
                     if (WebViewPanel* home = WebViewPanel::if_built())

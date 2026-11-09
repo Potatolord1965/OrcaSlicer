@@ -55,10 +55,14 @@ body
 #LeftBoard
 {
 	display: none;  /* shown by cloud_providers_info from backend */
+	flex-direction: column;
 	border-right: 1px solid var(--border-color);
 	width: 220px; /*Match sidebar width with Device / Project / Calibration tabs*/
 	min-width: 220px;
 	height: 100%;
+	overflow-x: hidden;
+	overflow-y: auto;
+	box-sizing: border-box;
 	background: var(--bg-color-sidebar);
 }
 
@@ -435,12 +439,14 @@ body
 /*------------------*/
 #BtnArea
 {
-	margin-top: 30px;	
+	margin-top: 30px;
+	flex: none;
 }
 
 #ModelSiteArea
 {
 	margin-top: 18px;
+	flex: none;
 }
 
 .NavSectionTitle
@@ -490,6 +496,141 @@ body
 
 .BtnItem .icon16 {
 	background-color: var(--fg-color-text);
+}
+
+/*------Nav icons: shown beside each label, and alone when the column is collapsed------*/
+:root
+{
+	--icon-recent:
+		url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="none" stroke="black" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="10" r="7.2"/><path d="M10 6v4.2l2.8 1.8"/></svg>');
+	--icon-cloud:
+		url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="none" stroke="black" stroke-width="1.6" stroke-linejoin="round"><path d="M6 15.5h8.2a3.3 3.3 0 0 0 .4-6.6A4.8 4.8 0 0 0 5.4 8.3 3.6 3.6 0 0 0 6 15.5Z"/></svg>');
+	--icon-wiki:
+		url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="none" stroke="black" stroke-width="1.6" stroke-linejoin="round"><path d="M3 4.5c2.6-.8 4.9-.6 7 1v11c-2.1-1.6-4.4-1.8-7-1Z"/><path d="M17 4.5c-2.6-.8-4.9-.6-7 1v11c2.1-1.6 4.4-1.8 7-1Z"/></svg>');
+	--icon-collapse:
+		url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="none" stroke="black" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3.5" width="14" height="13" rx="2"/><path d="M8 3.5v13"/><path d="M13.2 8 11.2 10l2 2"/></svg>');
+}
+
+.icon20
+{
+	-webkit-mask: var(--icon-url) center / contain no-repeat;
+	mask: var(--icon-url) center / contain no-repeat;
+	width: 20px;
+	height: 20px;
+	flex: none;
+	background-color: currentColor;
+	pointer-events: none;
+}
+
+.IconRecent   {--icon-url:var(--icon-recent  );}
+.IconCloud    {--icon-url:var(--icon-cloud   );}
+.IconWiki     {--icon-url:var(--icon-wiki    );}
+.IconCollapse {--icon-url:var(--icon-collapse);}
+
+.NavIcon, .SiteBadge
+{
+	margin-right: 10px;
+}
+
+.BtnLabel
+{
+	flex: 1;
+	min-width: 0;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+/*----Model-site badges: the site's initial on its brand colour----*/
+.SiteBadge
+{
+	flex: none;
+	width: 20px;
+	height: 20px;
+	border-radius: 5px;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	font-size: 12px;
+	font-weight: 700;
+	line-height: 1;
+	color: #FFFFFF;
+	pointer-events: none;
+}
+
+.SiteUnlayered   { background: #1A1A1A; box-shadow: inset 0 0 0 1px #5A5A5A; }
+.SiteMakerWorld  { background: #00AE42; }
+.SiteNexprint    { background: #1F6FEB; }
+.SiteThingiverse { background: #248BFB; }
+
+#NavCollapseBtn
+{
+	margin-top: auto;   /*----pinned to the bottom of the column----*/
+	flex: none;
+	border-top: 1px solid var(--border-color);
+}
+
+/*----Collapsed column: icons only. The class is toggled by SetNavCollapsed in js/home.js,
+      and the app is told the new width (WebViewPanel::set_nav_collapsed).----*/
+body.nav-collapsed #LeftBoard
+{
+	width: 56px;
+	min-width: 56px;
+}
+
+body.nav-collapsed .BtnItem
+{
+	padding-left: 0;
+	padding-right: 0;
+	justify-content: center;
+}
+
+body.nav-collapsed .NavIcon,
+body.nav-collapsed .SiteBadge
+{
+	margin-right: 0;
+}
+
+body.nav-collapsed .BtnLabel,
+body.nav-collapsed .BtnItem .icon16,
+body.nav-collapsed .NavSectionTitle,
+body.nav-collapsed .AccountText,
+body.nav-collapsed .AccountSignIn,
+body.nav-collapsed .AccountChevron,
+body.nav-collapsed #BambuCloudHeader,
+body.nav-collapsed #NoPluginTip,
+body.nav-collapsed #AccountMenuHandle
+{
+	display: none !important;
+}
+
+/*----The section title's space becomes a thin divider, so the groups stay apart.----*/
+body.nav-collapsed #ModelSiteArea
+{
+	border-top: 1px solid var(--border-color);
+	padding-top: 8px;
+}
+
+body.nav-collapsed #LoginArea
+{
+	padding: 8px 4px;
+}
+
+body.nav-collapsed .AccountRow
+{
+	justify-content: center;
+	padding: 6px 0;
+}
+
+/*----Collapsed, every signed-in account shows as its avatar, Bambu's included.----*/
+body.nav-collapsed #BambuCloudBody
+{
+	max-height: none;
+}
+
+body.nav-collapsed #NavCollapseBtn .IconCollapse
+{
+	transform: scaleX(-1);
 }
 
 .LeftIcon
