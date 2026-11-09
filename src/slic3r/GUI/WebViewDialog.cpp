@@ -475,6 +475,15 @@ void WebViewPanel::apply_cloud_layout(bool cloud_on)
     Layout();
 }
 
+void WebViewPanel::set_nav_collapsed(bool collapsed)
+{
+    if (m_nav_collapsed == collapsed)
+        return;
+    m_nav_collapsed = collapsed;
+    // The nav column width only matters while the homepage is pinned beside a pane.
+    apply_cloud_layout(cloud_mode_active());
+}
+
 ModelSiteView* WebViewPanel::model_view(const std::string& site, bool create)
 {
     if (auto it = m_model_views.find(site); it != m_model_views.end())
