@@ -24,8 +24,30 @@ there and the views do not all start loading together with the homepage.
 | Nexprint | ElegooSlicer's Online Models: `https://www.nexprint.com/elegooSlicer` (`nexprint.cn` for the China region), with its user agent and `language`, `region`, `theme`, `deviceId` parameters | ElegooSlicer's page protocol (`report.*` requests, `client.*` events through `HandleStudio`) answered from the Elegoo account in `ElegooCloud`; `report.notLogged` opens the Elegoo sign-in. |
 | Thingiverse | The plain site | None. |
 
+Pop-ups a site opens (`window.open`, `target=_blank`), sign-in windows above all, open in an app
+window that hosts the child web view the event carries (`wxEVT_WEBVIEW_NEWWINDOW_FEATURES`), so the
+opener relationship holds and an OAuth pop-up can hand its result back to the pane. Links to other
+apps (`mailto:` and the like) go to the system.
+
+Thingiverse also gets the toolbar, with an **Open copied link** button: a sign-in or confirmation
+link that arrives by email is copied and opened in the pane, so the session lands in the app.
+
 On every site, a link to a model file or an "Open in slicer" link (`bambustudio://`, `cura://`,
 `elegooslicer://`, ...) is imported into the plater through `GUI_App::start_download`.
+
+## Unlayered account
+
+Signing in to Universe follows Unlayered Slicer's account provider protocol
+(`ACCOUNT_PROVIDER_PROTOCOL.md` in its source), with `https://unlayered3d.com` as the provider:
+
+- The page's navigation to `/login?next=…` is intercepted. The app starts a device hand-off
+  (`/api/login/handoff/start`), shows the provider's `/auth/slicer?id=…` page in an app window
+  (with a button to finish in the system browser instead), and polls `/api/slicer/device/collect`
+  every 2 s for up to 290 s. Closing the window does not stop the poll.
+- The device token goes to the OS credential store (`wxSecretStore`, service
+  `UnifiedSlicer/UnlayeredAccount`). A `401` from the provider deletes it.
+- With a token, the pane is signed in through `/api/slicer/web-session`, both on its first load and
+  after a sign-in, and `slicer.getInfo` reports `account.signedIn` with the provider origin.
 
 ## Unlayered bridge constraints
 

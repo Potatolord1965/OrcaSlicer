@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <iomanip>
 #include <regex>
@@ -20,6 +21,13 @@
 #include <openssl/rand.h>
 
 #include <wx/bmpbuttn.h>
+#include <wx/arrstr.h>
+#include <wx/button.h>
+#include <wx/clipbrd.h>
+#include <wx/dataobj.h>
+#include <wx/dialog.h>
+#include <wx/secretstore.h>
+#include <wx/stattext.h>
 #include <wx/sizer.h>
 #include <wx/uri.h>
 #include <wx/utils.h>
@@ -232,6 +240,163 @@ std::vector<std::string> risky_gcode_lines(const json& preset)
     return out;
 }
 
+// Root of Unlayered's account provider (ACCOUNT_PROVIDER_PROTOCOL.md in the Unlayered Slicer source).
+constexpr const char* UNLAYERED_PROVIDER     = "https://unlayered3d.com";
+constexpr const char* UNLAYERED_SECRET_STORE = "UnifiedSlicer/UnlayeredAccount";
+
+// The device token Unlayered's provider issued to this installation, kept in the OS credential
+// store (Windows Credential Manager, Keychain, Secret Service) and cached for the session. Without
+// a credential store it lives in memory for the session only.
+std::string& unlayered_token_cache()
+{
+    static std::string token;
+    static bool        loaded = false;
+    if (!loaded) {
+        loaded              = true;
+        wxSecretStore store = wxSecretStore::GetDefault();
+        wxString      user;
+        wxSecretValue secret;
+        if (store.IsOk() && store.Load(UNLAYERED_SECRET_STORE, user, secret) && secret.IsOk())
+            token.assign(static_cast<const char*>(secret.GetData()), secret.GetSize());
+    }
+    return token;
+}
+
+std::string unlayered_token() { return unlayered_token_cache(); }
+
+void unlayered_set_token(const std::string& token)
+{
+    unlayered_token_cache() = token;
+    wxSecretStore store     = wxSecretStore::GetDefault();
+    if (!store.IsOk())
+        return;
+    if (token.empty())
+        store.Delete(UNLAYERED_SECRET_STORE);
+    else
+        store.Save(UNLAYERED_SECRET_STORE, "device", wxSecretValue(wxString::FromUTF8(token)));
+}
+
+// One blocking JSON POST to the provider (worker threads only). Returns the HTTP status (0 when no
+// answer) and fills `reply`.
+unsigned unlayered_post(const std::string& path, const json& body, const std::string& token, json& reply)
+{
+    unsigned status = 0;
+    std::string text;
+    Http http = Http::post(std::string(UNLAYERED_PROVIDER) + path);
+    http.header("User-Agent", std::string(SLIC3R_APP_KEY) + "/" + SLIC3R_VERSION)
+        .header("Accept", "application/json")
+        .header("Content-Type", "application/json")
+        .timeout_connect(10)
+        .timeout_max(30)
+        .size_limit(64 * 1024)
+        .set_post_body(body.dump());
+    if (!token.empty())
+        http.header("Authorization", "Bearer " + token);
+    http.on_complete([&](std::string b, unsigned st) { text = std::move(b); status = st; })
+        .on_error([&](std::string b, std::string, unsigned st) { text = std::move(b); status = st; })
+        .perform_sync();
+    reply = json::parse(text, nullptr, false);
+    if (!reply.is_object())
+        reply = json::object();
+    return status;
+}
+
+// The refusal message a provider answer carries, if any.
+std::string unlayered_error(const json& reply)
+{
+    if (reply.contains("error")) {
+        const json& e = reply["error"];
+        if (e.is_string())
+            return e.get<std::string>();
+        if (e.is_object() && e.contains("message") && e["message"].is_string())
+            return e["message"].get<std::string>();
+    }
+    if (reply.contains("detail") && reply["detail"].is_string())
+        return reply["detail"].get<std::string>();
+    return {};
+}
+
+// A web page in its own window: a pop-up a model site opened (window.open / target=_blank, with
+// its opener kept, so sign-in pop-ups can hand their result back), or a page the app opens itself
+// such as a sign-in page. Pop-ups opened from it open the same way, and model links in it are
+// imported like in the pane.
+class ModelSiteWebDialog : public wxDialog
+{
+public:
+    // A pop-up: hosts the child web view the event carries.
+    ModelSiteWebDialog(wxWindow* parent, wxWebViewWindowFeatures* features)
+        : wxDialog(parent, wxID_ANY, wxEmptyString, wxDefaultPosition, wxDefaultSize, wxDEFAULT_DIALOG_STYLE | wxRESIZE_BORDER)
+    {
+        m_browser = features->GetChildWebView();
+        m_browser->Create(this, wxID_ANY);
+        wxSize size = features->GetSize();
+        if (!size.IsFullySpecified() || size.x < 200 || size.y < 200)
+            size = FromDIP(wxSize(560, 720));
+        build(size, wxEmptyString);
+    }
+
+    // A page the app opens; `browser_label` non-empty adds a button that opens the same page in the
+    // system browser instead.
+    ModelSiteWebDialog(wxWindow* parent, const wxString& title, const wxString& url, const wxString& browser_label)
+        : wxDialog(parent, wxID_ANY, title, wxDefaultPosition, wxDefaultSize, wxDEFAULT_DIALOG_STYLE | wxRESIZE_BORDER)
+    {
+        m_browser = WebView::CreateWebView(this, url);
+        build(FromDIP(wxSize(560, 760)), browser_label, url);
+    }
+
+    static void open_popup(wxWindow* parent, wxWebViewEvent& evt)
+    {
+        wxWebViewWindowFeatures* features = evt.GetTargetWindowFeatures();
+        if (features == nullptr)
+            return;
+        auto* dlg = new ModelSiteWebDialog(wxGetTopLevelParent(parent), features);
+        dlg->Show();
+    }
+
+    wxWebView* browser() const { return m_browser; }
+
+private:
+    void build(const wxSize& size, const wxString& browser_label, const wxString& url = wxString())
+    {
+        auto* sizer = new wxBoxSizer(wxVERTICAL);
+        if (m_browser != nullptr) {
+            sizer->Add(m_browser, 1, wxEXPAND);
+            m_browser->Bind(wxEVT_WEBVIEW_TITLE_CHANGED, [this](wxWebViewEvent& e) {
+                if (!e.GetString().empty())
+                    SetTitle(e.GetString());
+            });
+            m_browser->Bind(wxEVT_WEBVIEW_WINDOW_CLOSE_REQUESTED, [this](wxWebViewEvent&) { CallAfter([this] { Destroy(); }); });
+            m_browser->Bind(wxEVT_WEBVIEW_NAVIGATING, [](wxWebViewEvent& e) {
+                if (is_slicer_open_url(e.GetURL()) || is_model_file_url(e.GetURL())) {
+                    e.Veto();
+                    import_model_url(e.GetURL());
+                }
+            });
+            m_browser->Bind(wxEVT_WEBVIEW_NEWWINDOW, [](wxWebViewEvent& e) {
+                if (is_slicer_open_url(e.GetURL()) || is_model_file_url(e.GetURL())) {
+                    e.Veto();
+                    import_model_url(e.GetURL());
+                }
+            });
+            m_browser->Bind(wxEVT_WEBVIEW_NEWWINDOW_FEATURES, [this](wxWebViewEvent& e) { open_popup(this, e); });
+        }
+        if (!browser_label.empty()) {
+            auto* row = new wxBoxSizer(wxHORIZONTAL);
+            row->AddStretchSpacer();
+            auto* btn = new wxButton(this, wxID_ANY, browser_label);
+            btn->Bind(wxEVT_BUTTON, [url](wxCommandEvent&) { wxLaunchDefaultBrowser(url); });
+            row->Add(btn, 0, wxALL, FromDIP(8));
+            sizer->Add(row, 0, wxEXPAND);
+        }
+        SetSizer(sizer);
+        SetSize(size);
+        CentreOnParent();
+        Bind(wxEVT_CLOSE_WINDOW, [this](wxCloseEvent&) { Destroy(); });
+    }
+
+    wxWebView* m_browser{nullptr};
+};
+
 } // namespace
 
 const std::vector<std::string>& ModelSiteView::sites()
@@ -250,7 +415,7 @@ ModelSiteView::ModelSiteView(wxWindow* parent, const std::string& site)
     : wxPanel(parent, wxID_ANY), m_site(site), m_alive(std::make_shared<bool>(true))
 {
     auto* sizer = new wxBoxSizer(wxVERTICAL);
-    if (m_site == "makerworld") {
+    if (m_site == "makerworld" || m_site == "thingiverse") {
         create_toolbar();
         sizer->Add(m_toolbar, 0, wxEXPAND | wxALL, FromDIP(8));
     }
@@ -277,6 +442,9 @@ ModelSiteView::ModelSiteView(wxWindow* parent, const std::string& site)
     for (const auto& type : {wxEVT_WEBVIEW_NAVIGATING, wxEVT_WEBVIEW_NAVIGATED, wxEVT_WEBVIEW_LOADED, wxEVT_WEBVIEW_TITLE_CHANGED,
                              wxEVT_WEBVIEW_ERROR, wxEVT_WEBVIEW_NEWWINDOW, wxEVT_WEBVIEW_SCRIPT_MESSAGE_RECEIVED})
         m_browser->Bind(type, &ModelSiteView::on_webview_event, this);
+    // Pop-ups (sign-in windows above all) open in an app window that keeps its opener, so the site's
+    // sign-in completes here rather than in the system browser.
+    m_browser->Bind(wxEVT_WEBVIEW_NEWWINDOW_FEATURES, [this](wxWebViewEvent& evt) { ModelSiteWebDialog::open_popup(this, evt); });
 
     // A theme or language change: the user agent carries both, and Nexprint takes the theme in its
     // URL, so it reloads its start page; the other sites just reload (WebView::RecreateAll).
@@ -338,6 +506,15 @@ void ModelSiteView::load_home()
         makerworld_load(url);
         return;
     }
+    if (m_site == "unlayered" && !unlayered_token().empty() && unlayered_trusted(url)) {
+        // Signed in to Unlayered: open the page signed in (ACCOUNT_PROVIDER_PROTOCOL.md §6).
+        const wxURI uri(url);
+        wxString    next = uri.GetPath();
+        if (uri.HasQuery())
+            next += "?" + uri.GetQuery();
+        unlayered_web_session(next.utf8_string(), url);
+        return;
+    }
     // Deferred, so CreateWebView's queued setup (the "wx" script handler) runs before the first load.
     m_browser->CallAfter([this, url] { m_browser->LoadURL(url); });
 }
@@ -374,6 +551,13 @@ void ModelSiteView::create_toolbar()
     m_back_btn         = make_button("mall_control_back", _L_CONTEXT("Back", "Navigation"));
     m_refresh_btn      = make_button("mall_control_refresh", _L("Refresh"));
     m_open_browser_btn = make_button("open_in_browser", _L("Open in browser"));
+    if (m_site == "thingiverse") {
+        // Sign-in and confirmation links that arrive by email: copy the link, then open it here so
+        // the sign-in lands in this pane rather than in the system browser.
+        m_open_link_btn = new wxButton(m_toolbar, wxID_ANY, _L("Open copied link"), wxDefaultPosition, wxDefaultSize, wxBU_EXACTFIT);
+        m_open_link_btn->SetToolTip(_L("Opens the web link on the clipboard in this page, for example a sign-in link from an email."));
+        m_open_link_btn->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) { open_clipboard_link(); });
+    }
 
     m_back_btn->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) {
         if (m_browser && m_browser->CanGoBack())
@@ -396,8 +580,32 @@ void ModelSiteView::create_toolbar()
     row->Add(m_back_btn, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(12));
     row->Add(m_refresh_btn, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(12));
     row->AddStretchSpacer(1);
+    if (m_open_link_btn != nullptr)
+        row->Add(m_open_link_btn, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(12));
     row->Add(m_open_browser_btn, 0, wxALIGN_CENTER_VERTICAL);
     m_toolbar->SetSizer(row);
+}
+
+void ModelSiteView::open_clipboard_link()
+{
+    wxString text;
+    if (wxTheClipboard->Open()) {
+        if (wxTheClipboard->IsSupported(wxDF_UNICODETEXT) || wxTheClipboard->IsSupported(wxDF_TEXT)) {
+            wxTextDataObject data;
+            wxTheClipboard->GetData(data);
+            text = data.GetText();
+        }
+        wxTheClipboard->Close();
+    }
+    text.Trim().Trim(false);
+    if (!text.StartsWith("https://") && !text.StartsWith("http://")) {
+        MessageDialog(this, _L("Copy the link first (right-click it in the email and choose Copy link), then press this button."),
+                      _L("Open copied link"), wxOK | wxICON_INFORMATION)
+            .ShowModal();
+        return;
+    }
+    if (m_browser != nullptr)
+        m_browser->LoadURL(text);
 }
 
 void ModelSiteView::update_toolbar()
@@ -424,18 +632,28 @@ void ModelSiteView::on_webview_event(wxWebViewEvent& evt)
             import_model_url(url);
             return;
         }
+        // Unlayered's sign-in link: signed in by the app, as Unlayered Slicer does (§6).
+        if (m_site == "unlayered" && is_unlayered_login(url)) {
+            evt.Veto();
+            unlayered_sign_in(unlayered_login_next(url));
+            return;
+        }
         // A new document: the bridge token of the old one is void (Unlayered).
         if (url == evt.GetTarget() || evt.GetTarget().empty())
             m_bridge_token.clear();
     } else if (type == wxEVT_WEBVIEW_NEWWINDOW) {
-        evt.Veto();
-        if (is_slicer_open_url(url) || is_model_file_url(url))
+        if (is_slicer_open_url(url) || is_model_file_url(url)) {
+            evt.Veto();
             import_model_url(url);
-        else if (m_site == "unlayered" && !unlayered_trusted(url))
-            // Unlayered Universe hands sign-in and other sites to the real browser, as its tab does.
+        } else if (m_site == "unlayered" && is_unlayered_login(url)) {
+            evt.Veto();
+            unlayered_sign_in(unlayered_login_next(url));
+        } else if (!url.empty() && !url.StartsWith("http://") && !url.StartsWith("https://") && !url.StartsWith("about:")) {
+            // mailto: and other apps' links.
+            evt.Veto();
             wxLaunchDefaultBrowser(url);
-        else if (url.StartsWith("http://") || url.StartsWith("https://"))
-            m_browser->CallAfter([this, url] { m_browser->LoadURL(url); });
+        }
+        // Anything else opens as a pop-up window of the app (wxEVT_WEBVIEW_NEWWINDOW_FEATURES).
     } else if (type == wxEVT_WEBVIEW_LOADED) {
         if (m_site == "unlayered" && unlayered_trusted(m_browser->GetCurrentURL()))
             unlayered_inject_bridge();
@@ -710,7 +928,7 @@ void ModelSiteView::unlayered_message(const json& msg)
             {"tab", {{"slot", "universe_app"}, {"title", "Universe"}, {"layout", "tab"}}},
             {"settingsAccess", false},
             {"printerAccess", false},
-            {"account", {{"signedIn", false}, {"provider", ""}}},
+            {"account", {{"signedIn", !unlayered_token().empty()}, {"provider", UNLAYERED_PROVIDER}}},
             {"features", json::array()},
         };
         unlayered_respond(id, method, 0, "success", info);
@@ -723,6 +941,134 @@ void ModelSiteView::unlayered_message(const json& msg)
     } else {
         unlayered_respond(id, method, 1001, "unknown method");
     }
+}
+
+bool ModelSiteView::is_unlayered_login(const wxString& url)
+{
+    const wxURI uri(url);
+    return http_origin(url) == UNLAYERED_PROVIDER && (uri.GetPath() == "/login" || uri.GetPath() == "/login/");
+}
+
+std::string ModelSiteView::unlayered_login_next(const wxString& url)
+{
+    // `next` must be a path on the provider; anything else falls back to the Universe page.
+    const wxURI uri(url);
+    for (const wxString& pair : wxSplit(uri.GetQuery(), '&')) {
+        if (!pair.StartsWith("next="))
+            continue;
+        const std::string next = Http::url_decode(pair.Mid(5).utf8_string());
+        if (boost::starts_with(next, "/") && !boost::starts_with(next, "//"))
+            return next;
+    }
+    return "/universe?host=unlayered-slicer";
+}
+
+void ModelSiteView::unlayered_web_session(const std::string& next, const wxString& fallback)
+{
+    std::weak_ptr<bool> alive = m_alive;
+    const std::string   token = unlayered_token();
+    std::thread([this, alive, next, fallback, token] {
+        json           reply;
+        const unsigned status = unlayered_post("/api/slicer/web-session", {{"next", next}}, token, reply);
+        std::string    path   = reply.value("path", "");
+        const bool     ok     = status >= 200 && status < 300 && boost::starts_with(path, "/api/slicer/web-session?code=") &&
+                         path.find_first_of(" \t\r\n") == std::string::npos;
+        wxGetApp().CallAfter([this, alive, ok, path, status, fallback] {
+            if (status == 401)
+                unlayered_set_token({}); // the device token is no longer valid
+            auto a = alive.lock();
+            if (!a || !*a || m_browser == nullptr)
+                return;
+            if (ok)
+                m_browser->LoadURL(wxString::FromUTF8(std::string(UNLAYERED_PROVIDER) + path));
+            else if (!fallback.empty())
+                m_browser->LoadURL(fallback);
+        });
+    }).detach();
+}
+
+// Unlayered Slicer's device hand-off (ACCOUNT_PROVIDER_PROTOCOL.md §2): the provider's sign-in
+// page opens in an app window (with a button for the system browser instead), the app collects
+// the device token once the person has signed in there, and the pane is then signed in (§6).
+void ModelSiteView::unlayered_sign_in(const std::string& next)
+{
+    const wxString fallback = wxString::FromUTF8(std::string(UNLAYERED_PROVIDER) + next);
+    if (!unlayered_token().empty()) {
+        unlayered_web_session(next, fallback);
+        return;
+    }
+    if (m_signing_in)
+        return;
+    m_signing_in = true;
+
+    std::weak_ptr<bool> alive = m_alive;
+    const std::string   label = std::string(SLIC3R_APP_NAME) + " " + SLIC3R_VERSION + " on " + wxGetHostName().utf8_string();
+    std::thread([this, alive, next, fallback, label] {
+        auto finish = [this, alive](const std::string& error) {
+            wxGetApp().CallAfter([this, alive, error] {
+                auto a = alive.lock();
+                if (!a || !*a)
+                    return;
+                m_signing_in = false;
+                if (m_sign_in_dialog != nullptr) {
+                    m_sign_in_dialog->Destroy();
+                    m_sign_in_dialog = nullptr;
+                }
+                if (!error.empty())
+                    MessageDialog(this, from_u8(error), _L("Sign in to Unlayered"), wxOK | wxICON_WARNING).ShowModal();
+            });
+        };
+
+        json     reply;
+        unsigned status = unlayered_post("/api/login/handoff/start", json::object(), {}, reply);
+        const std::string id = reply.value("id", ""), secret = reply.value("secret", "");
+        if (status < 200 || status >= 300 || id.empty() || secret.empty()) {
+            const std::string why = unlayered_error(reply);
+            finish(why.empty() ? _u8L("Could not reach the Unlayered sign-in service. Check the internet connection and try again.") : why);
+            return;
+        }
+
+        const wxString page = wxString::FromUTF8(std::string(UNLAYERED_PROVIDER) + "/auth/slicer?id=" + Http::url_encode(id));
+        wxGetApp().CallAfter([this, alive, page] {
+            auto a = alive.lock();
+            if (!a || !*a)
+                return;
+            m_sign_in_dialog = new ModelSiteWebDialog(wxGetTopLevelParent(this), _L("Sign in to Unlayered"), page,
+                                                      _L("Use my web browser instead"));
+            // Closing the window does not stop the sign-in: it may be finishing in the browser.
+            m_sign_in_dialog->Bind(wxEVT_DESTROY, [this, alive](wxWindowDestroyEvent& e) {
+                if (auto a2 = alive.lock(); a2 && *a2 && e.GetEventObject() == m_sign_in_dialog)
+                    m_sign_in_dialog = nullptr;
+                e.Skip();
+            });
+            m_sign_in_dialog->Show();
+        });
+
+        // Poll every 2 s for up to 290 s; no answer at all counts as pending.
+        for (int i = 0; i < 145; ++i) {
+            std::this_thread::sleep_for(std::chrono::seconds(2));
+            if (auto a = alive.lock(); !a || !*a)
+                return;
+            json     r;
+            unsigned st = unlayered_post("/api/slicer/device/collect", {{"id", id}, {"secret", secret}, {"label", label}}, {}, r);
+            if (st == 0 || (st >= 200 && st < 300 && r.value("pending", false)))
+                continue;
+            const std::string token = r.value("token", "");
+            if (st >= 200 && st < 300 && !token.empty()) {
+                wxGetApp().CallAfter([this, alive, token, next, fallback] {
+                    unlayered_set_token(token);
+                    if (auto a2 = alive.lock(); a2 && *a2)
+                        unlayered_web_session(next, fallback);
+                });
+                finish({});
+                return;
+            }
+            const std::string why = unlayered_error(r);
+            finish(why.empty() ? _u8L("Signing in to Unlayered failed.") : why);
+            return;
+        }
+        finish(_u8L("Signing in to Unlayered timed out. Please try again."));
+    }).detach();
 }
 
 // Common checks of the two download methods. Returns 0, or the error code with `error` set.
