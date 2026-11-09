@@ -93,7 +93,7 @@ user looks at it.
   discovery callback it would steal), sets `set_on_ssdp_msg_fn`, and calls
   `start_discovery(true, false)`. It never connects. Each announcement is the agent's ssdp JSON:
   `dev_id`, `dev_name`, `dev_type`, plus the optional `online` (bool), `status` (short text) and
-  `progress` (0-100). The account goes through `GUI_App` when an `ICloudServiceAgent` runs for
+  `progress` (0-100). Opening a printer monitors it with that agent on the Printer page. The account goes through `GUI_App` when an `ICloudServiceAgent` runs for
   `cloud_provider`; otherwise the provider counts as signed in once a device is announced.
   Used for Elegoo (`elegoo_cc2`, account `elegoo`) and Creality (`creality_cloud`, account
   `creality`).
