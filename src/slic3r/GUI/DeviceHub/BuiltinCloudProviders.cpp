@@ -124,6 +124,7 @@ struct BambuCloudPrinter
 {
     std::string name;
     std::string model;
+    std::string model_id; // dev_model_name, e.g. "C11"
     bool        online{false};
     std::string task_status;
 };
@@ -145,6 +146,7 @@ void parse_bambu_cloud_list(const std::string& body)
         BambuCloudPrinter p;
         p.name = d.contains("dev_name") && d["dev_name"].is_string() ? d["dev_name"].get<std::string>() : dev_id;
         const std::string model = d.contains("dev_model_name") && d["dev_model_name"].is_string() ? d["dev_model_name"].get<std::string>() : std::string();
+        p.model_id = model;
         if (!model.empty())
             p.model = DevPrinterConfigUtil::get_printer_display_name(model);
         if (p.model.empty() && d.contains("dev_product_name") && d["dev_product_name"].is_string())
@@ -247,13 +249,18 @@ void BambuCloudProvider::refresh_printers(PrintersCallback done)
         if (obj != nullptr) {
             p.name  = from_u8(obj->get_dev_name());
             p.model = obj->get_printer_type_display_str();
+            p.image = obj->printer_type;
         }
         if (cloud_it != cloud.end()) {
             if (p.name.empty())
                 p.name = from_u8(cloud_it->second.name);
             if (p.model.empty())
                 p.model = from_u8(cloud_it->second.model);
+            if (p.image.empty())
+                p.image = cloud_it->second.model_id;
         }
+        if (!p.image.empty())
+            p.image = "printer_preview_" + p.image;
         p.online = online;
         // The live report when connected, else the job the account reports; with neither the
         // printer is reachable but its state unknown, which is not the same as idle.

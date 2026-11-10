@@ -27,6 +27,7 @@ struct CloudPrinter
     wxString    status;       // short, already translated ("Idle", "Printing", ...)
     bool        online{false};
     int         progress{-1}; // 0..100 while a job runs, -1 otherwise
+    std::string image;        // picture for the card view: bitmap name in resources/images; empty for a generic one
 };
 
 // What the Plater hands a provider when the user prints to one of its printers.
