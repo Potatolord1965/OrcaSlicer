@@ -17,7 +17,7 @@ import okhttp3.Request
 import java.io.IOException
 
 /** Base for LAN printers polled over HTTP with an optional X-Api-Key. Unreachable means offline. */
-abstract class HttpPrinterSource(final override val account: LanPrinter, private val ctx: SourceContext) : PrinterSource {
+abstract class HttpPrinterSource(final override val account: LanPrinter, protected val ctx: SourceContext) : PrinterSource {
     protected val base = baseUrl(account.host)
     protected abstract val via: String
 
@@ -25,6 +25,13 @@ abstract class HttpPrinterSource(final override val account: LanPrinter, private
         val b = Request.Builder().url(base + path)
         if (account.secret.isNotBlank()) b.header("X-Api-Key", account.secret.trim())
         return ctx.http.fetchJson(b.build())
+    }
+
+    /** A request to [path] carrying the API key, for subclasses that upload. */
+    protected fun request(path: String): Request.Builder {
+        val b = Request.Builder().url(base + path)
+        if (account.secret.isNotBlank()) b.header("X-Api-Key", account.secret.trim())
+        return b
     }
 
     protected fun status(state: PrinterState) =

@@ -11,6 +11,19 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.outlined.AccountCircle
 import androidx.compose.material.icons.outlined.Print
 import androidx.compose.material.icons.outlined.Settings
+import androidx.compose.material.icons.outlined.ViewInAr
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import app.unifiedslicer.companion.core.source.PrintJob
+import app.unifiedslicer.companion.data.PrintFiles
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -72,7 +85,35 @@ fun CompanionNav(app: CompanionApp, dark: Boolean, openPrinter: String?, onPrint
     val accounts by app.accounts.accounts.collectAsStateWithLifecycle()
     val snapshot by app.printers.snapshot.collectAsStateWithLifecycle()
     val refreshing by app.printers.refreshing.collectAsStateWithLifecycle()
+    val send by app.printers.send.collectAsStateWithLifecycle()
+    val pendingFile by app.printers.pendingFile.collectAsStateWithLifecycle()
     var tab by rememberSaveable { mutableIntStateOf(0) }
+    val scope = rememberCoroutineScope()
+    var pickError by remember { mutableStateOf<String?>(null) }
+
+    fun offer(job: PrintJob) {
+        app.printers.offerFile(job)
+        nav.navigate("send") { launchSingleTop = true }
+    }
+
+    val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) scope.launch {
+            try {
+                val job = withContext(Dispatchers.IO) { PrintFiles.import(app, uri) }
+                if (PrintFiles.isPrinterReady(job.name)) offer(job)
+                else pickError = "${job.name} is not a sliced file. Pick G-code made for your printer."
+            } catch (e: Exception) {
+                pickError = e.message ?: "Could not read the file"
+            }
+        }
+    }
+    pickError?.let { msg ->
+        AlertDialog(
+            onDismissRequest = { pickError = null },
+            text = { Text(msg) },
+            confirmButton = { TextButton(onClick = { pickError = null }) { Text("OK") } },
+        )
+    }
 
     LaunchedEffect(openPrinter) {
         if (openPrinter != null) {
@@ -96,9 +137,15 @@ fun CompanionNav(app: CompanionApp, dark: Boolean, openPrinter: String?, onPrint
                         onRefresh = { app.printers.refreshAsync() },
                         onOpen = { nav.navigate("printer/" + Uri.encode(it)) },
                         onAdd = { nav.navigate("add") },
-                        onAccounts = { tab = 1 },
+                        onAccounts = { tab = 2 },
                     )
-                    1 -> AccountsScreen(
+                    1 -> ModelsScreen(
+                        send,
+                        onOpenSite = { nav.navigate("site/${it.name}") },
+                        onPickFile = { picker.launch(arrayOf("*/*")) },
+                        onShowSend = { nav.navigate("send") { launchSingleTop = true } },
+                    )
+                    2 -> AccountsScreen(
                         accounts, snapshot,
                         onAdd = { nav.navigate("add") },
                         onEdit = { nav.navigate(editRoute(it)) },
@@ -111,6 +158,25 @@ fun CompanionNav(app: CompanionApp, dark: Boolean, openPrinter: String?, onPrint
         composable("printer/{key}") { entry ->
             val key = entry.arguments?.getString("key")?.let { Uri.decode(it) }
             PrinterDetailScreen(snapshot?.printers?.firstOrNull { it.key == key }) { nav.popBackStack() }
+        }
+        composable("site/{site}") { entry ->
+            val site = runCatching { ModelSite.valueOf(entry.arguments?.getString("site").orEmpty()) }.getOrDefault(ModelSite.MAKERWORLD)
+            BrowserScreen(site, app.http, onBack = { nav.popBackStack() }, onFile = { offer(it) })
+        }
+        composable("send") {
+            SendScreen(
+                pendingFile, accounts, snapshot, send,
+                onSend = { printer, job -> app.printers.startSend(printer, job) },
+                onCancel = { app.printers.cancelSend() },
+                onClose = {
+                    val s = send
+                    when {
+                        s == null || s.running -> nav.popBackStack()
+                        s.done -> { app.printers.clearSend(); app.printers.offerFile(null); nav.popBackStack() }
+                        else -> app.printers.clearSend() // failed: back to the printer choice to retry
+                    }
+                },
+            )
         }
         composable("add") { AddScreen(onBack = { nav.popBackStack() }, onPick = { nav.navigate("add/$it") }) }
         composable("add/bambu?replace={replace}", arguments = replaceArg) { e ->
@@ -155,7 +221,7 @@ private fun HomeScaffold(tab: Int, onTab: (Int) -> Unit, onAdd: () -> Unit, cont
         },
         bottomBar = {
             NavigationBar(containerColor = MaterialTheme.colorScheme.surfaceContainerLow) {
-                val items = listOf(Icons.Outlined.Print to "Printers", Icons.Outlined.AccountCircle to "Accounts", Icons.Outlined.Settings to "Settings")
+                val items = listOf(Icons.Outlined.Print to "Printers", Icons.Outlined.ViewInAr to "Models", Icons.Outlined.AccountCircle to "Accounts", Icons.Outlined.Settings to "Settings")
                 items.forEachIndexed { i, (icon, label) ->
                     NavigationBarItem(
                         selected = tab == i,

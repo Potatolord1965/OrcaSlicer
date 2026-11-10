@@ -16,7 +16,29 @@ import app.unifiedslicer.companion.core.net.long
 import app.unifiedslicer.companion.core.net.num
 import app.unifiedslicer.companion.core.net.obj
 import app.unifiedslicer.companion.core.net.str
+import app.unifiedslicer.companion.core.net.fetchText
+import app.unifiedslicer.companion.core.net.fileBody
+import app.unifiedslicer.companion.core.net.forUploads
+import app.unifiedslicer.companion.core.net.md5
+import app.unifiedslicer.companion.core.net.toHex
+import app.unifiedslicer.companion.core.source.PrintCapable
+import app.unifiedslicer.companion.core.source.PrintJob
 import app.unifiedslicer.companion.core.source.PrinterSource
+import app.unifiedslicer.companion.core.source.SendProgress
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.addJsonObject
+import kotlinx.serialization.json.putJsonArray
+import java.io.File
+import java.security.MessageDigest
+import java.time.ZoneOffset
+import java.time.ZonedDateTime
+import java.time.format.DateTimeFormatter
+import java.util.Base64
+import java.util.Locale
+import java.util.zip.GZIPOutputStream
+import javax.crypto.Mac
+import javax.crypto.spec.SecretKeySpec
 import app.unifiedslicer.companion.core.source.SourceContext
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -92,7 +114,7 @@ class CrealityApi(private val http: OkHttpClient, private val region: String, pr
     }
 }
 
-class CrealityCloudSource(override val account: CrealityAccount, ctx: SourceContext) : PrinterSource {
+class CrealityCloudSource(override val account: CrealityAccount, private val ctx: SourceContext) : PrinterSource, PrintCapable {
     private val api = CrealityApi(ctx.http, account.region, account.deviceUid)
 
     override suspend fun refresh(): List<PrinterStatus> {
@@ -109,6 +131,60 @@ class CrealityCloudSource(override val account: CrealityAccount, ctx: SourceCont
                 async { status(dn, d) }
             }.awaitAll()
         }
+    }
+
+    /**
+     * As Creality Print: gzip the G-code, PUT it to Creality's Aliyun OSS bucket with the account's
+     * temporary credentials, register it (uploadGcode) and queue it on the printer (addSingleTask).
+     */
+    override suspend fun print(deviceId: String, job: PrintJob, progress: SendProgress) {
+        progress.update(0, "Preparing the upload…")
+        val empty = JsonObject(emptyMap())
+        val aliyun = api.post("/api/cxy/account/v2/getAliyunInfo", empty, account).obj("aliyunInfo")
+        val keyId = aliyun.str("accessKeyId") ?: throw IOException("Creality Cloud returned no upload credentials")
+        val secret = aliyun.str("secretAccessKey") ?: throw IOException("Creality Cloud returned no upload credentials")
+        val sessionToken = aliyun.str("sessionToken")
+        val oss = api.post("/api/cxy/v2/common/getOssInfo", empty, account).obj("info")
+        val endpoint = oss.str("endpoint")?.substringAfter("://")?.trimEnd('/') ?: throw IOException("Creality Cloud returned no storage location")
+        val bucket = oss.obj("file").str("bucket") ?: throw IOException("Creality Cloud returned no storage location")
+
+        val display = job.name.removeSuffix(".gcode").removeSuffix(".GCODE").ifEmpty { "unnamed" }
+        val key = objectKey(display, md5(job.file).toHex())
+        val gz = withContext(Dispatchers.IO) {
+            File.createTempFile("creality-upload", ".gcode.gz", job.file.parentFile).also { out ->
+                GZIPOutputStream(out.outputStream()).use { z -> job.file.inputStream().use { it.copyTo(z) } }
+            }
+        }
+        try {
+            progress.update(0, "Uploading to Creality Cloud…")
+            val contentType = "application/octet-stream"
+            val date = httpDate()
+            val ossHeaders = if (sessionToken != null) "x-oss-security-token:$sessionToken\n" else ""
+            val signature = ossSignature(secret, "PUT\n\n$contentType\n$date\n$ossHeaders/$bucket/$key")
+            val size = gz.length().coerceAtLeast(1)
+            val req = Request.Builder().url("https://$bucket.$endpoint/$key")
+                .header("Date", date)
+                .header("Authorization", "OSS $keyId:$signature")
+                .header("Content-Disposition", "attachment;filename=\"$display.gcode.gz\"")
+                .apply { if (sessionToken != null) header("x-oss-security-token", sessionToken) }
+                .put(fileBody(gz, contentType) { progress.update((it * 100 / size).toInt(), null) })
+                .build()
+            ctx.http.forUploads().fetchText(req)
+        } finally {
+            gz.delete()
+        }
+
+        progress.update(100, "Starting the print…")
+        val uploaded = api.post("/api/cxy/v2/gcode/uploadGcode", buildJsonObject {
+            putJsonArray("list") { addJsonObject { put("name", display); put("fileKey", key); put("type", 1) } }
+        }, account).arr("list")?.firstOrNull()
+        val gcodeId = uploaded.str("id") ?: throw IOException("Creality Cloud did not register the upload")
+        val fileKey = uploaded.str("filekey") ?: uploaded.str("fileKey") ?: key
+        api.post("/api/rest/print/cluster/addSingleTask", buildJsonObject {
+            put("deviceName", deviceId); put("gcodeId", gcodeId); put("taskName", display)
+            put("gcodeFilePath", "https://file-cdn.creality.com/$fileKey"); put("printCount", 1); put("modelName", display)
+        }, account)
+        progress.update(100, "Print started")
     }
 
     private suspend fun status(dn: String, d: JsonElement): PrinterStatus {
@@ -147,6 +223,20 @@ class CrealityCloudSource(override val account: CrealityAccount, ctx: SourceCont
 
     companion object {
         private const val VIA = "Creality Cloud"
+
+        fun objectKey(displayName: String, fileMd5Hex: String): String {
+            val digest = MessageDigest.getInstance("MD5").digest("$displayName:$fileMd5Hex".toByteArray())
+            return "model/slice/" + digest.toHex(upper = true) + ".gcode.gz"
+        }
+
+        /** Aliyun OSS header signature: base64(HMAC-SHA1(secret, canonical string)). */
+        fun ossSignature(secret: String, toSign: String): String {
+            val mac = Mac.getInstance("HmacSHA1").apply { init(SecretKeySpec(secret.toByteArray(), "HmacSHA1")) }
+            return Base64.getEncoder().encodeToString(mac.doFinal(toSign.toByteArray()))
+        }
+
+        fun httpDate(now: ZonedDateTime = ZonedDateTime.now(ZoneOffset.UTC)): String =
+            DateTimeFormatter.ofPattern("EEE, dd MMM yyyy HH:mm:ss 'GMT'", Locale.US).format(now)
 
         /** 0 idle, 1 printing, 2 finished, 3 failed, 4 stopped, 5 paused. */
         fun state(s: Int): PrinterState = when (s) {

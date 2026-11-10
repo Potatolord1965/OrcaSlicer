@@ -15,7 +15,23 @@ import app.unifiedslicer.companion.core.net.int
 import app.unifiedslicer.companion.core.net.jsonBody
 import app.unifiedslicer.companion.core.net.long
 import app.unifiedslicer.companion.core.net.str
+import app.unifiedslicer.companion.core.net.fetchText
+import app.unifiedslicer.companion.core.net.fileBody
+import app.unifiedslicer.companion.core.net.forUploads
+import app.unifiedslicer.companion.core.net.md5
+import app.unifiedslicer.companion.core.net.obj
+import app.unifiedslicer.companion.core.net.toHex
+import app.unifiedslicer.companion.core.source.PrintCapable
+import app.unifiedslicer.companion.core.source.PrintJob
 import app.unifiedslicer.companion.core.source.PrinterSource
+import app.unifiedslicer.companion.core.source.SendProgress
+import app.unifiedslicer.companion.core.source.hasExtension
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.putJsonArray
+import kotlinx.serialization.json.putJsonObject
 import app.unifiedslicer.companion.core.source.SourceContext
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -33,7 +49,7 @@ import java.io.IOException
  * Elegoo Cloud (matrix.elegoo.com), as used by ElegooSlicer and Unified Slicer: bound printers
  * from device/list, last reported status from device/report-data/list.
  */
-class ElegooCloudSource(account: ElegooAccount, private val ctx: SourceContext) : PrinterSource {
+class ElegooCloudSource(account: ElegooAccount, private val ctx: SourceContext) : PrinterSource, PrintCapable {
     override var account: ElegooAccount = account
         private set
 
@@ -61,6 +77,114 @@ class ElegooCloudSource(account: ElegooAccount, private val ctx: SourceContext) 
                 java.net.URLEncoder.encode(serial, "UTF-8"))
         return parseReport(reply.el("data"))
     }
+
+    /**
+     * Cloud print as ElegooSlicer does it: upload to Elegoo's storage, tell the printer over
+     * messaging to download it (1057, progress 6006), then start it (1020).
+     */
+    override suspend fun print(deviceId: String, job: PrintJob, progress: SendProgress) {
+        val rtm = ctx.rtm ?: throw IOException("Elegoo cloud printing is not available on this device")
+        val serial = deviceId
+        val name = if (hasExtension(job.name, ".gcode", ".3mf")) job.name else job.name + ".gcode"
+        progress.update(0, "Checking the printer…")
+        if (report(serial).first.obj("machine_status").int("status") == 2)
+            throw IOException("The printer is busy with another print")
+
+        val md5 = md5(job.file)
+        val hex = md5.toHex()
+        val ext = "." + name.substringAfterLast('.').lowercase()
+        val serverName = account.userId.takeLast(6) + "_" + serial.takeLast(6) + "_" + hex + ext
+        val before = fileCreateTime(serial, name)
+
+        progress.update(0, "Uploading to the Elegoo cloud…")
+        val md5Base64 = java.util.Base64.getEncoder().encodeToString(md5)
+        val slot = call("GET", "/api/v1/device-management-server/oss/biz-entrypoint?filename=" + enc(serverName) +
+                "&bucketAlias=iot-private&module=gcode&fileMd5=" + enc(md5Base64)).obj("data")
+        val entry = slot.str("entrypoint") ?: throw IOException("Elegoo did not provide an upload slot")
+        val url = slot.str("accessUrl") ?: throw IOException("Elegoo did not provide an upload slot")
+        val size = job.file.length().coerceAtLeast(1)
+        // Cloudflare in front of the bucket rejects requests without a client identity (fetchText adds ours).
+        ctx.http.forUploads().fetchText(
+            Request.Builder().url(entry).header("Content-MD5", md5Base64)
+                .put(fileBody(job.file) { progress.update((it * 50 / size).toInt(), null) }).build()
+        )
+
+        progress.update(50, "Connecting to the printer…")
+        val token = call("GET", "/api/v1/device-management-server/device/list/agora-token?source=slicer").obj("data").obj("agoraToken")
+        val rtmUser = token.str("rtmUserId") ?: throw IOException("Elegoo did not return a messaging token for this account")
+        val rtmToken = token.str("rtmToken") ?: throw IOException("Elegoo did not return a messaging token for this account")
+        val channel = ElegooPrinterChannel.open(rtm, token.str("userId").orEmpty(), rtmUser, rtmToken, serial)
+        try {
+            val task = buildJsonObject { put("taskID", serial) }
+            runCatching { channel.request(ElegooPrinterChannel.M_CANCEL_DOWNLOAD, task, 5) } // nothing to cancel is fine
+            delay(1000)
+            channel.download = null
+            progress.update(50, "The printer is downloading the file…")
+            channel.request(ElegooPrinterChannel.M_DOWNLOAD_FILE, buildJsonObject {
+                put("filename", name); put("url", url); put("md5", hex); put("taskID", serial)
+            }, 15)
+            try {
+                awaitDownload(channel, serial, name, before, progress)
+            } catch (e: CancellationException) {
+                withContext(NonCancellable) { runCatching { channel.request(ElegooPrinterChannel.M_CANCEL_DOWNLOAD, task, 5, needReply = false) } }
+                throw e
+            }
+
+            progress.update(100, "Starting the print…")
+            fun start(force: Boolean) = buildJsonObject {
+                put("storage_media", "local")
+                put("filename", name)
+                putJsonObject("config") {
+                    put("delay_video", false); put("printer_check", true); put("print_layout", "A")
+                    put("bedlevel_force", force); putJsonArray("slot_map") {}
+                }
+            }
+            try {
+                channel.request(ElegooPrinterChannel.M_START_PRINT, start(false), 10)
+            } catch (e: ElegooPrinterError) {
+                if (e.code != 1026) throw e // no bed mesh saved yet: level first
+                channel.request(ElegooPrinterChannel.M_START_PRINT, start(true), 10)
+            }
+            progress.update(100, "Print started")
+        } finally {
+            channel.close()
+        }
+    }
+
+    private suspend fun awaitDownload(channel: ElegooPrinterChannel, serial: String, name: String, before: String?, progress: SendProgress) {
+        var lastPct = -1
+        var lastChange = System.currentTimeMillis()
+        while (true) {
+            delay(500)
+            channel.download?.let { d ->
+                val pct = d.int("progress") ?: 0
+                if (pct != lastPct) {
+                    lastPct = pct
+                    lastChange = System.currentTimeMillis()
+                    progress.update(50 + pct / 2, null)
+                }
+                when (d.int("status")) {
+                    1 -> return
+                    2 -> throw IOException("The printer cancelled the download")
+                    3 -> throw IOException("The printer failed to download the file")
+                }
+            }
+            if (System.currentTimeMillis() - lastChange > 60_000) {
+                // No progress for a minute: the file may have landed anyway.
+                val now = fileCreateTime(serial, name)
+                if (now != null && now != before) return
+                throw IOException("The printer reported no download progress for 60 seconds")
+            }
+        }
+    }
+
+    /** createTime of a file on the printer as the cloud knows it, or null. */
+    private suspend fun fileCreateTime(serial: String, name: String): String? = runCatching {
+        call("GET", "/api/v1/device-management-server/local-file/filename?serialNo=" + enc(serial) + "&filename=" + enc(name))
+            .obj("data")?.get("createTime")?.toString()
+    }.getOrNull()
+
+    private fun enc(s: String) = java.net.URLEncoder.encode(s, "UTF-8").replace("+", "%20")
 
     private suspend fun call(method: String, path: String, body: JsonElement? = null): JsonElement {
         ensureFreshToken()

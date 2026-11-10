@@ -60,7 +60,7 @@ fun SettingsScreen(settings: Settings, version: String, onBackgroundChanged: (Bo
         SectionLabel("About")
         Text("Unified Monitor $version", style = MaterialTheme.typography.bodyMedium)
         Text(
-            "Companion to Unified Slicer. Bambu Lab, Elegoo, Creality and Markforged clouds, plus Bambu LAN, Elegoo CC2, Klipper, OctoPrint and PrusaLink printers.",
+            "Companion to Unified Slicer. Watches Bambu Lab, Elegoo, Creality and Markforged printers plus Klipper, OctoPrint and PrusaLink on your network, and sends sliced files to Elegoo, Creality and network printers.",
             style = MaterialTheme.typography.bodySmall, color = LocalStudio.current.muted,
         )
     }

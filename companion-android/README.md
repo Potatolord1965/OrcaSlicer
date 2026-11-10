@@ -10,9 +10,22 @@ Companion app for Unified Slicer: watches every printer from your phone in one l
 | Markforged | Eiger API keys (devices + active job) |
 | Klipper, OctoPrint, PrusaLink | HTTP on the local network |
 
-Features: live status (progress, time left, layer, temperatures, stage) refreshed every few seconds while open, notifications when a print finishes, fails or pauses (checked every 15 minutes in the background), brand-coloured accents, dark theme by default.
+Features: send sliced files to a printer (see below), live status (progress, time left, layer, temperatures, stage) refreshed every few seconds while open, notifications when a print finishes, fails or pauses (checked every 15 minutes in the background), brand-coloured accents, dark theme by default.
 
 The protocols are the ones Unified Slicer's desktop code uses (`src/slic3r/Utils/ElegooCloud.cpp`, `CrealityCloud.cpp`, `MarkforgedEiger.cpp`, `resources/plugins/elegoo_cc2_lan.py`); Bambu Cloud uses Bambu's public account API.
+
+## Sending prints
+
+A phone cannot slice, so the app sends printer-ready files (G-code): one downloaded in the in-app MakerWorld / Nexprint / Creality Cloud browser, or one picked from the phone.
+
+| Printer | How the print is sent |
+| --- | --- |
+| Elegoo cloud | Upload to Elegoo's storage, then download (1057) and start (1020) over Agora RTM, as `ElegooCloud::send` does |
+| Elegoo CC2 on LAN | Chunked HTTP upload, then start (1020) over MQTT |
+| Creality cloud | Gzip, signed PUT to Creality's OSS bucket, `uploadGcode`, `addSingleTask` |
+| Klipper, OctoPrint, PrusaLink | HTTP upload with print-after-upload |
+| Bambu Lab | Not sent by this app: Bambu firmware only accepts print commands signed by Bambu's own apps. MakerWorld's Print link is handed to Bambu Handy |
+| Markforged | Not sent: Eiger slices and queues its own jobs |
 
 ## Layout
 

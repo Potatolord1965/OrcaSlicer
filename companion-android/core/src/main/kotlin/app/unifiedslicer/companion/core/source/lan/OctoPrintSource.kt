@@ -9,10 +9,17 @@ import app.unifiedslicer.companion.core.net.long
 import app.unifiedslicer.companion.core.net.num
 import app.unifiedslicer.companion.core.net.obj
 import app.unifiedslicer.companion.core.net.str
+import app.unifiedslicer.companion.core.net.fetchText
+import app.unifiedslicer.companion.core.net.fileBody
+import app.unifiedslicer.companion.core.net.forUploads
+import app.unifiedslicer.companion.core.source.PrintCapable
+import app.unifiedslicer.companion.core.source.PrintJob
+import app.unifiedslicer.companion.core.source.SendProgress
 import app.unifiedslicer.companion.core.source.SourceContext
+import okhttp3.MultipartBody
 import kotlinx.serialization.json.JsonElement
 
-class OctoPrintSource(account: LanPrinter, ctx: SourceContext) : HttpPrinterSource(account, ctx) {
+class OctoPrintSource(account: LanPrinter, ctx: SourceContext) : HttpPrinterSource(account, ctx), PrintCapable {
     override val via = "LAN · OctoPrint"
 
     override suspend fun read(): PrinterStatus {
@@ -24,6 +31,18 @@ class OctoPrintSource(account: LanPrinter, ctx: SourceContext) : HttpPrinterSour
             throw e
         }
         return parse(printer, get("/api/job"))
+    }
+
+    override suspend fun print(deviceId: String, job: PrintJob, progress: SendProgress) {
+        progress.update(0, "Uploading to OctoPrint…")
+        val size = job.file.length().coerceAtLeast(1)
+        val body = MultipartBody.Builder().setType(MultipartBody.FORM)
+            .addFormDataPart("select", "true")
+            .addFormDataPart("print", "true")
+            .addFormDataPart("file", job.name, fileBody(job.file) { progress.update((it * 100 / size).toInt(), null) })
+            .build()
+        ctx.http.forUploads().fetchText(request("/api/files/local").post(body).build())
+        progress.update(100, "Print started")
     }
 
     fun parse(printer: JsonElement, job: JsonElement): PrinterStatus {

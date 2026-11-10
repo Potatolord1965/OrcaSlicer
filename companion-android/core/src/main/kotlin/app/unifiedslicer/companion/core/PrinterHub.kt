@@ -3,7 +3,10 @@ package app.unifiedslicer.companion.core
 import app.unifiedslicer.companion.core.model.Account
 import app.unifiedslicer.companion.core.model.PrinterStatus
 import app.unifiedslicer.companion.core.net.AuthException
+import app.unifiedslicer.companion.core.source.PrintCapable
+import app.unifiedslicer.companion.core.source.PrintJob
 import app.unifiedslicer.companion.core.source.PrinterSource
+import app.unifiedslicer.companion.core.source.SendProgress
 import app.unifiedslicer.companion.core.source.SourceContext
 import app.unifiedslicer.companion.core.source.createSource
 import kotlinx.coroutines.CancellationException
@@ -78,6 +81,13 @@ class PrinterHub(private val ctx: SourceContext, private val factory: (Account, 
             }
         }
         HubSnapshot(printers, problems)
+    }
+
+    /** Sends [job] to a printer and starts it. Throws with a readable message on failure. */
+    suspend fun print(accountId: String, deviceId: String, job: PrintJob, progress: SendProgress) {
+        val src = lock.withLock { sources[accountId]?.second } ?: throw java.io.IOException("This printer is no longer on your accounts")
+        val capable = src as? PrintCapable ?: throw java.io.IOException("${src.account.kindLabel} printers cannot be sent prints from this app")
+        capable.print(deviceId, job, progress)
     }
 
     /** Drops open connections (e.g. when the app goes to the background); the next refresh reconnects. */

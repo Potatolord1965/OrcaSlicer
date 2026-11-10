@@ -8,3 +8,6 @@
 -dontwarn org.bouncycastle.**
 -dontwarn org.conscrypt.**
 -dontwarn org.openjsse.**
+# Agora RTM calls back into Java from native code.
+-keep class io.agora.** { *; }
+-dontwarn io.agora.**

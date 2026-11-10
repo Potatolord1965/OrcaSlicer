@@ -14,8 +14,10 @@ android {
         applicationId = "app.unifiedslicer.companion"
         minSdk = 26
         targetSdk = 36
-        versionCode = 1
-        versionName = "1.0.0"
+        versionCode = 2
+        versionName = "1.1.0"
+        // The Elegoo messaging SDK ships native code; phones are ARM.
+        ndk { abiFilters += setOf("arm64-v8a", "armeabi-v7a") }
     }
 
     signingConfigs {
@@ -64,6 +66,7 @@ dependencies {
     implementation(libs.androidx.navigation.compose)
     implementation(libs.androidx.work)
     implementation(libs.androidx.webkit)
+    implementation(libs.agora.rtm)
     implementation(platform(libs.compose.bom))
     implementation(libs.compose.ui)
     implementation(libs.compose.ui.tooling.preview)

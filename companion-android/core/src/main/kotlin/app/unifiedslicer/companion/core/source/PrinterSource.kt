@@ -41,6 +41,8 @@ interface PrinterSource : Closeable {
 class SourceContext(
     val http: OkHttpClient,
     val onAccountUpdated: (Account) -> Unit = {},
+    /** Needed for printing through Elegoo's cloud; null where the messaging SDK is unavailable. */
+    val rtm: RtmConnector? = null,
 )
 
 fun createSource(account: Account, ctx: SourceContext): PrinterSource = when (account) {
