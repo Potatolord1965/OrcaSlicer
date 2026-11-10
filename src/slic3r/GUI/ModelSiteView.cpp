@@ -127,6 +127,19 @@ wxString http_origin(const wxString& url)
 
 std::string url_host(const std::string& url) { return wxURI(wxString::FromUTF8(url)).GetServer().Lower().utf8_string(); }
 
+// Whether `url` is an https page of MakerWorld, the only pages its command set is served to.
+bool is_makerworld_page(const wxString& url)
+{
+    const wxURI uri(url);
+    if (uri.GetScheme().Lower() != "https" || uri.HasUserInfo())
+        return false;
+    const std::string host = uri.GetServer().Lower().utf8_string();
+    for (const char* site : {"makerworld.com", "makerworld.com.cn"})
+        if (host == site || boost::ends_with(host, std::string(".") + site))
+            return true;
+    return false;
+}
+
 // "Open in slicer" links the model sites emit (MakerWorld → bambustudio, Thingiverse → cura,
 // Printables → prusaslicer, Nexprint → elegooslicer). Downloader::start_download handles each.
 bool is_slicer_open_url(const wxString& url)
@@ -143,8 +156,8 @@ bool is_slicer_open_url(const wxString& url)
 bool is_model_file_url(const wxString& url)
 {
     const wxURI    uri(url);
-    const wxString scheme = uri.GetScheme().Lower();
-    if (scheme != "http" && scheme != "https")
+    // https only: a model fetched over plain http can be swapped on the way.
+    if (uri.GetScheme().Lower() != "https")
         return false;
     const std::string path = uri.GetPath().Lower().utf8_string();
     for (const char* ext : {".3mf", ".stl", ".step", ".stp", ".obj", ".amf", ".zip"})
@@ -667,15 +680,20 @@ void ModelSiteView::on_webview_event(wxWebViewEvent& evt)
 
 void ModelSiteView::on_script_message(const std::string& body)
 {
+    // The pane browses the whole web; each protocol answers its own site only.
+    const wxString page = m_browser != nullptr ? m_browser->GetCurrentURL() : wxString();
     if (m_site == "makerworld") {
-        makerworld_message(body);
+        if (is_makerworld_page(page))
+            makerworld_message(body);
         return;
     }
     const json msg = json::parse(body, nullptr, false);
     if (!msg.is_object())
         return;
-    if (m_site == "nexprint")
-        nexprint_message(msg);
+    if (m_site == "nexprint") {
+        if (ElegooCloud::is_elegoo_page(page.utf8_string()))
+            nexprint_message(msg);
+    }
     else if (m_site == "unlayered")
         unlayered_message(msg);
 }
@@ -688,6 +706,20 @@ void ModelSiteView::makerworld_message(const std::string& body)
 {
     // The page speaks the homepage command set (makerworld_model_open, common_openurl, ...), which
     // GUI_App::handle_web_request already serves; a reply goes back the way Bambu Studio sends it.
+    // Only the commands a model page needs: the rest of the set (recent files, sign-out, ...)
+    // belongs to the app's own home page.
+    static const std::vector<std::string> allowed{"makerworld_model_open", "modelmall_model_open", "request_project_download",
+                                                  "common_openurl", "get_login_info", "get_bambu_login_info",
+                                                  "homepage_login_or_register", "homepage_bambu_login_or_register"};
+    const json        msg     = json::parse(body, nullptr, false);
+    const std::string command = msg.is_object() && msg.contains("command") && msg["command"].is_string() ? msg["command"].get<std::string>() : "";
+    if (std::find(allowed.begin(), allowed.end(), command) == allowed.end())
+        return;
+    if (command == "common_openurl") {
+        const std::string url = msg.contains("url") && msg["url"].is_string() ? msg["url"].get<std::string>() : "";
+        if (!boost::starts_with(url, "https://"))
+            return;
+    }
     std::string response = wxGetApp().handle_web_request(body);
     response.erase(std::remove(response.begin(), response.end(), '\n'), response.end());
     if (response.empty())
@@ -796,7 +828,7 @@ void ModelSiteView::nexprint_message(const json& msg)
     } else if (method == "report.websiteOpen") {
         nexprint_respond(id, method, 0, json::object());
         const std::string url = params.value("url", "");
-        if (boost::starts_with(url, "https://") || boost::starts_with(url, "http://"))
+        if (boost::starts_with(url, "https://"))
             wxGetApp().CallAfter([url] { wxLaunchDefaultBrowser(wxString::FromUTF8(url)); });
     } else if (method == "reload") {
         nexprint_respond(id, method, 0, json::object());

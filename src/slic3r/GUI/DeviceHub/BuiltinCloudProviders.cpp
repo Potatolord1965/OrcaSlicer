@@ -4,10 +4,7 @@
 #include <functional>
 #include <utility>
 
-#include <boost/filesystem/operations.hpp>
-#include <boost/filesystem/path.hpp>
 #include <boost/log/trivial.hpp>
-#include <boost/nowide/fstream.hpp>
 #include <nlohmann/json.hpp>
 #include <wx/app.h>
 #include <wx/dialog.h>
@@ -480,38 +477,9 @@ bool PrinterAgentCloudProvider::handles_printer_preset(const DynamicPrintConfig&
 
 namespace {
 
-// Written by the Markforged thread's agent plug-in; other keys in it belong to the plug-in.
-boost::filesystem::path markforged_settings_path()
-{
-    // The plug-in keeps its data next to itself, in its package folder (see seed_bundled_plugins).
-    return boost::filesystem::path(data_dir()) / "orca_plugins" / "markforged_eiger" / "markforged_eiger_data" / "settings.json";
-}
-
-nlohmann::json read_markforged_settings()
-{
-    try {
-        boost::nowide::ifstream in(markforged_settings_path().string());
-        if (in)
-            return nlohmann::json::parse(in);
-    } catch (const std::exception& e) {
-        BOOST_LOG_TRIVIAL(warning) << "Markforged settings unreadable: " << e.what();
-    }
-    return nlohmann::json::object();
-}
-
-bool write_markforged_settings(const nlohmann::json& settings)
-{
-    try {
-        const boost::filesystem::path path = markforged_settings_path();
-        boost::filesystem::create_directories(path.parent_path());
-        boost::nowide::ofstream out(path.string());
-        out << settings.dump(2);
-        return bool(out);
-    } catch (const std::exception& e) {
-        BOOST_LOG_TRIVIAL(error) << "Markforged settings not saved: " << e.what();
-        return false;
-    }
-}
+// The API keys live in the file the Markforged agent plug-in shares; Eiger keeps the secret protected.
+nlohmann::json read_markforged_settings() { return Eiger::read_settings(); }
+bool write_markforged_settings(const nlohmann::json& settings) { return Eiger::write_settings(settings); }
 
 } // namespace
 

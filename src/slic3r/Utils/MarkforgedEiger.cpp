@@ -5,7 +5,16 @@
 #include <iomanip>
 #include <sstream>
 #include <stdexcept>
+#include <string>
 #include <thread>
+#include <utility>
+
+#ifdef _WIN32
+#include <windows.h>
+#include <wincrypt.h>
+#else
+#include <sys/stat.h>
+#endif
 
 #include <boost/filesystem.hpp>
 #include <boost/log/trivial.hpp>
@@ -42,16 +51,41 @@ std::string trim_quotes(std::string s)
     return s;
 }
 
-json read_settings()
+#ifdef _WIN32
+// Throws on failure.
+std::string dpapi(const std::string& in, bool protect)
 {
-    boost::nowide::ifstream in(Eiger::settings_file().string());
-    if (!in)
-        return json::object();
-    std::stringstream ss;
-    ss << in.rdbuf();
-    json j = json::parse(ss.str(), nullptr, false);
-    return j.is_object() ? j : json::object();
+    DATA_BLOB src{static_cast<DWORD>(in.size()), reinterpret_cast<BYTE*>(const_cast<char*>(in.data()))};
+    DATA_BLOB dst{0, nullptr};
+    const BOOL ok = protect ? CryptProtectData(&src, L"Markforged Eiger", nullptr, nullptr, nullptr, 0, &dst) :
+                              CryptUnprotectData(&src, nullptr, nullptr, nullptr, nullptr, 0, &dst);
+    if (!ok)
+        throw std::runtime_error("DPAPI error " + std::to_string(GetLastError()));
+    std::string out(reinterpret_cast<const char*>(dst.pbData), dst.cbData);
+    LocalFree(dst.pbData);
+    return out;
 }
+
+std::string to_hex(const std::string& data)
+{
+    static const char digits[] = "0123456789abcdef";
+    std::string       out;
+    out.reserve(data.size() * 2);
+    for (unsigned char c : data) {
+        out += digits[c >> 4];
+        out += digits[c & 15];
+    }
+    return out;
+}
+
+std::string from_hex(const std::string& hex)
+{
+    std::string out;
+    for (size_t i = 0; i + 1 < hex.size(); i += 2)
+        out += char(std::stoi(hex.substr(i, 2), nullptr, 16));
+    return out;
+}
+#endif
 
 json items_of(const json& res)
 {
@@ -106,6 +140,53 @@ json perform(Http&& http)
 
 fs::path Eiger::settings_file() { return fs::path(data_dir()) / "orca_plugins" / "markforged_eiger" / "markforged_eiger_data" / "settings.json"; }
 
+json Eiger::read_settings()
+{
+    boost::nowide::ifstream in(settings_file().string());
+    if (!in)
+        return json::object();
+    std::stringstream ss;
+    ss << in.rdbuf();
+    json j = json::parse(ss.str(), nullptr, false);
+    if (!j.is_object())
+        return json::object();
+#ifdef _WIN32
+    // A plain "secret_key" (earlier builds, or typed in by hand) is read as it is and protected on the next save.
+    if (j.contains("secret_key_protected") && j["secret_key_protected"].is_string()) {
+        try {
+            j["secret_key"] = dpapi(from_hex(j["secret_key_protected"].get<std::string>()), false);
+        } catch (const std::exception& e) {
+            BOOST_LOG_TRIVIAL(warning) << "Markforged: saved secret key unreadable: " << e.what();
+        }
+        j.erase("secret_key_protected");
+    }
+#endif
+    return j;
+}
+
+bool Eiger::write_settings(json settings)
+{
+    try {
+#ifdef _WIN32
+        if (settings.contains("secret_key") && settings["secret_key"].is_string()) {
+            settings["secret_key_protected"] = to_hex(dpapi(settings["secret_key"].get<std::string>(), true));
+            settings.erase("secret_key");
+        }
+#endif
+        fs::create_directories(settings_file().parent_path());
+        boost::nowide::ofstream out(settings_file().string(), std::ios::trunc);
+        out << settings.dump(2);
+        out.close();
+#ifndef _WIN32
+        ::chmod(settings_file().string().c_str(), 0600);
+#endif
+        return !out.fail();
+    } catch (const std::exception& e) {
+        BOOST_LOG_TRIVIAL(error) << "Markforged settings not saved: " << e.what();
+        return false;
+    }
+}
+
 EigerKeys Eiger::keys_for(const DynamicPrintConfig* cfg)
 {
     EigerKeys k;
@@ -135,9 +216,7 @@ void Eiger::save_keys(const EigerKeys& keys)
     json s          = read_settings(); // keep the agent's other settings
     s["access_key"] = keys.access;
     s["secret_key"] = keys.secret;
-    fs::create_directories(settings_file().parent_path());
-    boost::nowide::ofstream out(settings_file().string(), std::ios::trunc);
-    out << s.dump(2);
+    write_settings(std::move(s));
 }
 
 std::string Eiger::saved_settings_preset() { return read_settings().value("settings_preset", ""); }

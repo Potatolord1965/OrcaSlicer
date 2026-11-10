@@ -5,7 +5,7 @@
 # name = "Markforged (Eiger cloud)"
 # description = "Shows your Markforged printers from Eiger in the Device tab (status, progress, queue) and sends the plate to Eiger, which slices it and queues it on the printer you pick."
 # author = "Unified Slicer"
-# version = "0.1.0"
+# version = "0.1.1"
 # ///
 """Markforged printer agent, through the Eiger cloud API (https://www.eiger.io/api/v3).
 
@@ -45,6 +45,7 @@ import base64
 import json
 import os
 import struct
+import sys
 import threading
 import time
 import traceback
@@ -95,11 +96,37 @@ def log(msg: str) -> None:
         pass
 
 
+def _dpapi_unprotect(data: bytes) -> bytes:
+    """Decrypts what the app protected for the current Windows user (CryptProtectData)."""
+    import ctypes
+    from ctypes import wintypes
+
+    class Blob(ctypes.Structure):
+        _fields_ = [("cbData", wintypes.DWORD), ("pbData", ctypes.POINTER(ctypes.c_char))]
+
+    src = Blob(len(data), ctypes.cast(ctypes.create_string_buffer(data, len(data)), ctypes.POINTER(ctypes.c_char)))
+    dst = Blob()
+    if not ctypes.windll.crypt32.CryptUnprotectData(ctypes.byref(src), None, None, None, None, 0, ctypes.byref(dst)):
+        raise OSError("CryptUnprotectData failed")
+    try:
+        return ctypes.string_at(dst.pbData, dst.cbData)
+    finally:
+        ctypes.windll.kernel32.LocalFree(dst.pbData)
+
+
 def load_settings() -> dict:
     try:
-        return json.loads((DATA_DIR / "settings.json").read_text(encoding="utf-8"))
+        settings = json.loads((DATA_DIR / "settings.json").read_text(encoding="utf-8"))
     except Exception:
         return {}
+    # The app saves the secret key encrypted on Windows (Eiger::write_settings).
+    protected = settings.pop("secret_key_protected", None)
+    if protected and sys.platform == "win32":
+        try:
+            settings["secret_key"] = _dpapi_unprotect(bytes.fromhex(protected)).decode("utf-8")
+        except Exception as e:
+            log("saved secret key unreadable: %s" % e)
+    return settings
 
 
 # ------------------------------------------------------------------------------------------------
