@@ -37,6 +37,12 @@
 #include "slic3r/GUI/I18N.hpp"
 #include "slic3r/GUI/Jobs/SendJob.hpp"
 #include <boost/filesystem.hpp>
+#include <boost/system/error_code.hpp>
+#include <wx/utils.h>
+#ifdef _WIN32
+#include <wx/msw/registry.h>
+#endif
+#include "slic3r/Utils/Http.hpp"
 
 namespace fs = boost::filesystem;
 using json = nlohmann::json;
@@ -53,6 +59,7 @@ static auto file_over_size_str = _u8L("The print file exceeds the maximum allowa
 static auto print_canceled_str    = _u8L("Task canceled.");
 static auto send_print_failed_str = _u8L("Failed to send the print job. Please try again.");
 static auto upload_ftp_failed_str = _u8L("Failed to upload file to ftp. Please try again.");
+static auto bambu_connect_missing_str = _u8L("Bambu Lab's network plug-in only sends prints from apps that Bambu Lab has signed. Install Bambu Connect (wiki.bambulab.com/en/software/bambu-connect) and send again; the print will open there.");
 
 static auto     desc_network_error          = _u8L("Check the current status of the Bambu Lab server by clicking on the link above.");
 static auto     desc_file_too_large         = _u8L("The size of the print file is too large. Please adjust the file size and try again.");
@@ -66,6 +73,49 @@ static auto sending_over_cloud_str      = _u8L("Sending print job through cloud 
 static wxString wait_sending_finish         = _L("Print task sending times out.");
 //static wxString desc_wait_sending_finish    = _L("The printer timed out while receiving a print job. Please check if the network is functioning properly and send the print again.");
 //static wxString desc_wait_sending_finish    = _L("The printer timed out while receiving a print job. Please check if the network is functioning properly.");
+
+// Bambu Lab's network plug-in refuses to start prints for apps Bambu Lab has not signed
+// (BAMBU_NETWORK_SIGNED_ERROR), and this build is not one of them. Bambu Connect is Bambu
+// Lab's supported route for other slicers: it takes a sliced .gcode.3mf through its
+// bambu-connect:// URL scheme and sends it to the printer with its own authorization.
+// See https://wiki.bambulab.com/en/software/third-party-integration
+static bool bambu_connect_installed()
+{
+#ifdef _WIN32
+    return wxRegKey(wxRegKey::HKCR, "bambu-connect").Exists();
+#else
+    return true; // No cheap check; the OS reports an unknown scheme itself.
+#endif
+}
+
+static bool open_in_bambu_connect(const fs::path& gcode_3mf, std::string name)
+{
+    if (!bambu_connect_installed()) {
+        BOOST_LOG_TRIVIAL(warning) << "print_job: Bambu Connect is not installed";
+        return false;
+    }
+
+    // The sliced file lives in the plate's temp folder and is rewritten on the next slice,
+    // while Bambu Connect reads it after we return, so hand it a copy of its own.
+    std::replace_if(name.begin(), name.end(), [](char c) { return std::string("<>:\"/\\|?*").find(c) != std::string::npos || (unsigned char) c < 32; }, '_');
+    if (name.empty())
+        name = "print";
+    boost::system::error_code ec;
+    const fs::path dir = fs::path(data_dir()) / "bambu_connect";
+    fs::create_directories(dir, ec);
+    const fs::path copy = dir / (name + ".gcode.3mf");
+    fs::copy_file(gcode_3mf, copy, fs::copy_options::overwrite_existing, ec);
+    if (ec) {
+        BOOST_LOG_TRIVIAL(error) << "print_job: copying " << gcode_3mf << " for Bambu Connect failed: " << ec.message();
+        return false;
+    }
+
+    const std::string url = "bambu-connect://import-file?path=" + Http::url_encode(copy.string()) + "&name=" + Http::url_encode(name) +
+                            "&version=1.0.0";
+    BOOST_LOG_TRIVIAL(info) << "print_job: handing the print to Bambu Connect: " << url;
+    wxGetApp().CallAfter([url] { wxLaunchDefaultBrowser(wxString::FromUTF8(url)); });
+    return true;
+}
 
 PrintJob::PrintJob(std::string dev_id)
 : m_plater{wxGetApp().plater()},
@@ -270,7 +320,9 @@ void PrintJob::process(Ctl &ctl)
 
             ftp_ok = result == 0;
         }
-        if (!emmc_ok && !ftp_ok) {
+        if (!emmc_ok && result == BAMBU_NETWORK_SIGNED_ERROR) {
+            // The plug-in refused this app, not the printer; skip the IP/access code prompt.
+        } else if (!emmc_ok && !ftp_ok) {
             bool legacy_mode = BBLNetworkPlugin::instance().use_legacy_network();
             BOOST_LOG_TRIVIAL(error) << "LAN connection verification failed:"
                 << " emmc_ok=" << emmc_ok
@@ -681,6 +733,18 @@ void PrintJob::process(Ctl &ctl)
                     ctl.update_status(curr_percent, _u8L("Encountered an unknown error with the Storage status. Please try again."));
                     return;
             }
+        }
+    }
+
+    if (result == BAMBU_NETWORK_SIGNED_ERROR && m_print_type == "from_normal") {
+        BOOST_LOG_TRIVIAL(warning) << "print_job: the network plug-in refused this app (unsigned); trying Bambu Connect";
+        if (open_in_bambu_connect(job_data._3mf_path, m_project_name)) {
+            ctl.update_status(100, _u8L("Opened in Bambu Connect. Confirm the print there."));
+            result = 0;
+        } else {
+            ctl.show_error_info(bambu_connect_missing_str, 0, "", "");
+            BOOST_LOG_TRIVIAL(error) << "print_job: failed, result = " << result;
+            return;
         }
     }
 
