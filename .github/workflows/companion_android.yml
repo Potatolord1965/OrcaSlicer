@@ -1,0 +1,61 @@
+name: Companion Android app
+
+on:
+  push:
+    branches: [main]
+    paths: ["companion-android/**", ".github/workflows/companion_android.yml"]
+  pull_request:
+    paths: ["companion-android/**", ".github/workflows/companion_android.yml"]
+  workflow_dispatch:
+
+concurrency:
+  group: companion-android-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: companion-android
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+      # The runner image ships the Android SDK (ANDROID_HOME); AGP fetches missing platforms itself.
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Unit tests
+        run: ./gradlew --no-daemon :core:test
+      - name: Build APK
+        run: ./gradlew --no-daemon :app:assembleRelease
+      - name: Rename APK
+        run: cp app/build/outputs/apk/release/app-release.apk UnifiedMonitor.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: UnifiedMonitor-apk
+          path: companion-android/UnifiedMonitor.apk
+
+  # Keeps one always-current download link for installing on a phone.
+  publish:
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: UnifiedMonitor-apk
+      - name: Update the companion-latest release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh release delete companion-latest --yes --cleanup-tag || true
+          gh release create companion-latest UnifiedMonitor.apk --prerelease --target "$GITHUB_SHA" \
+            --title "Unified Monitor (Android) – latest" \
+            --notes "Android companion app built from $GITHUB_SHA. Open this page on your phone, tap UnifiedMonitor.apk, and allow installing from your browser."
