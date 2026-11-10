@@ -5339,16 +5339,21 @@ void GUI_App::force_colors_update()
     m_force_colors_update = true;
 }
 
+void GUI_App::set_device_accent(const std::optional<wxColour>& colour)
+{
+    m_device_accent = colour;
+    update_brand_accent();
+}
+
 void GUI_App::update_brand_accent()
 {
     if (preset_bundle == nullptr)
         return;
-    std::string vendor = preset_bundle->get_current_vendor_name();
-    if (m_accent_vendor && *m_accent_vendor == vendor)
+    const wxColour brand = m_device_accent ? *m_device_accent : Accent::brand_for_vendor(preset_bundle->get_current_vendor_name());
+    if (m_accent_applied && *m_accent_applied == brand)
         return;
-    m_accent_vendor = vendor;
+    m_accent_applied = brand;
 
-    const wxColour brand = Accent::brand_for_vendor(vendor);
     StateColor::SetAccent(brand);
     ImGuiWrapper::set_accent(brand);
 

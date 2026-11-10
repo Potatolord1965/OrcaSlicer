@@ -23,6 +23,7 @@
 #include <wx/weakref.h>
 #include <wx/wrapsizer.h>
 
+#include "slic3r/GUI/AccentColor.hpp"
 #include "slic3r/GUI/GUI.hpp"
 #include "slic3r/GUI/GUI_App.hpp"
 #include "slic3r/GUI/I18N.hpp"
@@ -532,8 +533,23 @@ void CloudProviderPage::apply_view()
 
 void CloudProviderPage::open_printer(const std::string& provider_id, const std::string& printer_id)
 {
-    if (CloudPrinterProviderPtr provider = CloudPrinterProviders::get(provider_id))
-        provider->open_printer(this, printer_id);
+    CloudPrinterProviderPtr provider = CloudPrinterProviders::get(provider_id);
+    if (!provider)
+        return;
+    DeviceHubPanel* hub = nullptr;
+    for (wxWindow* w = GetParent(); w != nullptr && hub == nullptr; w = w->GetParent())
+        hub = dynamic_cast<DeviceHubPanel*>(w);
+    if (hub != nullptr)
+        hub->set_opening_provider(provider_id);
+    provider->open_printer(this, printer_id);
+    // Queued after anything open_printer() queued, so a deferred opening still sees the provider.
+    if (hub != nullptr) {
+        wxWeakRef<DeviceHubPanel> weak(hub);
+        wxGetApp().CallAfter([weak]() {
+            if (weak)
+                weak->set_opening_provider({});
+        });
+    }
 }
 
 void CloudProviderPage::on_activated(wxDataViewEvent& evt)
@@ -713,6 +729,15 @@ bool DeviceHubPanel::select(const std::string& key)
     m_selected = key;
     if (e->button != nullptr)
         m_rail_selected = key;
+    else {
+        // A printer page: the brand of the service it was opened from, else (opened from Prepare
+        // or a print dialog) that of the selected printer preset, whose printer it then shows.
+        CloudPrinterProviderPtr provider = CloudPrinterProviders::get(m_opening_provider);
+        m_printer_accent                 = provider ? provider->brand_colour() : wxColour();
+        if (!m_printer_accent.IsOk())
+            if (PresetBundle* bundle = wxGetApp().preset_bundle)
+                m_printer_accent = Accent::brand_for_vendor(bundle->get_current_vendor_name());
+    }
     if (m_book->GetSelection() != idx)
         m_book->ChangeSelection(idx);
     // ChangeSelection() hides the old page and shows the new one without events; make sure the
@@ -740,24 +765,26 @@ void DeviceHubPanel::select_default()
     select(PAGE_ALL);
 }
 
-wxColour DeviceHubPanel::accent_for(const std::string& key) const
+wxColour DeviceHubPanel::current_accent() const
 {
-    if (key != PAGE_ALL) {
-        CloudPrinterProviderPtr provider = CloudPrinterProviders::get(key);
-        return provider ? provider->brand_colour() : wxColour();
-    }
-    if (const PresetBundle* bundle = wxGetApp().preset_bundle)
-        if (CloudPrinterProviderPtr provider = CloudPrinterProviders::for_printer_preset(bundle->printers.get_edited_preset().config))
-            return provider->brand_colour();
-    return {};
+    if (m_selected == PAGE_PRINTER || m_selected == PAGE_WEB)
+        return m_printer_accent;
+    if (m_selected == PAGE_ALL || m_selected.empty())
+        return {};
+    CloudPrinterProviderPtr provider = CloudPrinterProviders::get(m_selected);
+    return provider ? provider->brand_colour() : wxColour();
 }
+
+void DeviceHubPanel::set_opening_provider(const std::string& provider_id) { m_opening_provider = provider_id; }
+
+void DeviceHubPanel::apply_app_accent() { wxGetApp().set_device_accent(current_accent()); }
 
 void DeviceHubPanel::update_buttons()
 {
-    // The accent follows the printer brand in view: the selected service, or the selected
-    // printer's own service on All printers. A printer page lights the button it was opened from.
+    // The accent follows the printer brand in view. A printer page lights the button it was
+    // opened from, in that printer's brand.
     const std::string lit    = m_rail_selected.empty() ? std::string(PAGE_ALL) : m_rail_selected;
-    const wxColour    accent = accent_for(lit);
+    const wxColour    accent = current_accent();
     for (Entry& e : m_entries) {
         if (e.button == nullptr)
             continue;
@@ -770,6 +797,8 @@ void DeviceHubPanel::update_buttons()
     if (Entry* e = find(lit))
         if (auto* page = dynamic_cast<CloudProviderPage*>(e->page); page != nullptr && !page->provider())
             page->set_accent(accent);
+    if (IsShownOnScreen())
+        apply_app_accent();
 }
 
 void DeviceHubPanel::on_providers_changed(const std::string& provider_id)

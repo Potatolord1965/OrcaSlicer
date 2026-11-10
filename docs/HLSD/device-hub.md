@@ -74,7 +74,7 @@ button:
 | Method | Purpose |
 |---|---|
 | `id()`, `display_name()`, `order()` | Rail key, label, position. |
-| `brand_colour()` | Accent of the selected rail button and the page's primary button. On the Printer, Web UI and All printers pages the accent is that of the selected printer preset's provider, so it follows the printer's brand. |
+| `brand_colour()` | Accent of the selected rail button and the page's primary button. The accent follows the printer in view, not the selected printer preset: on the Printer and Web UI pages it is the brand of the service the printer was opened from (the preset's vendor when opened from Prepare or a print dialog), and All printers, which shows every brand, is neutral. While the Device tab shows, the whole app takes that accent (`GUI_App::set_device_accent()`); other tabs go back to the preset's brand. |
 | `is_available()`, `unavailable_reason()`, `install_or_enable()` | The service can't be used at all (plug-in missing); the page says why and offers an Install button. |
 | `is_logged_in()`, `account_name()`, `login(parent)`, `logout()` | The service's own account, independent of the others. |
 | `has_account()` | False for an entry with no account: the page shows `account_name()` as its subtitle and the primary button runs `login()` as "Add printer". |

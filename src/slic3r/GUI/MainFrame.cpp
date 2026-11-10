@@ -1544,6 +1544,12 @@ void MainFrame::init_tabpanel() {
         else if (panel == m_monitor_page) {
             //monitor
         }
+        // The Device tab takes the brand accent of the printer in view, the others the selected
+        // printer preset's.
+        if (panel == m_device_hub)
+            m_device_hub->apply_app_accent();
+        else
+            wxGetApp().set_device_accent(std::nullopt);
 #ifdef SLIC3R_CAD
         // Any page that is not Design takes the Design status line down with it — see
         // DesignPanel::on_tab_hidden for why the popup does not follow the page on its own.

@@ -109,6 +109,12 @@ public:
     // Re-shows the selected page, so a lazily built page builds when the tab opens.
     bool Show(bool show = true) override;
 
+    // A printer of this provider is being opened from a service page: the printer page it opens
+    // takes that provider's brand accent. Cleared once the opening is handled.
+    void set_opening_provider(const std::string& provider_id);
+    // Makes the app accent the brand of the printer in view; MainFrame calls it as the tab shows.
+    void apply_app_accent();
+
     void msw_rescale();
     void on_sys_color_changed();
 
@@ -127,9 +133,9 @@ private:
     void      add_entry(const std::string& key, const wxString& label, wxWindow* page, bool owned, bool on_rail = true);
     void      remove_entry(const std::string& key);
     void      update_buttons();
-    // Brand colour of an entry: its provider's, or for All printers that of the selected printer
-    // preset's provider. Invalid for the default accent.
-    wxColour  accent_for(const std::string& key) const;
+    // Brand colour of what is in view: a service page's provider, or on a printer page the brand
+    // of the printer opened. Invalid (neutral) on All printers, which shows every brand.
+    wxColour  current_accent() const;
     void      on_providers_changed(const std::string& provider_id);
 
     wxPanel*      m_rail{nullptr};
@@ -144,6 +150,8 @@ private:
     std::vector<Entry> m_entries; // rail order
     std::string        m_selected;
     std::string        m_rail_selected; // last page with a rail button, lit while a printer page shows
+    std::string        m_opening_provider; // provider whose printer is being opened
+    wxColour           m_printer_accent;   // brand of the printer the printer pages show
     int                m_listener{0};
 };
 
