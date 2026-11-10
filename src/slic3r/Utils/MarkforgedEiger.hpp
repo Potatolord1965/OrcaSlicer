@@ -35,6 +35,11 @@ public:
     // else from <data_dir>/orca_plugins/markforged_eiger/markforged_eiger_data/settings.json, which the Markforged agent shares.
     static EigerKeys            keys_for(const DynamicPrintConfig* printer_config);
     static void                 save_keys(const EigerKeys& keys);
+    // The shared settings file as an object, "secret_key" in the clear. On disk the secret is
+    // encrypted for the current Windows user ("secret_key_protected", DPAPI, hex); elsewhere the
+    // file is readable by its owner only. write_settings returns false when the file was not saved.
+    static nlohmann::json       read_settings();
+    static bool                 write_settings(nlohmann::json settings);
     static std::string          saved_settings_preset();
     static boost::filesystem::path settings_file();
 

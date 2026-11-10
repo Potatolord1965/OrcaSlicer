@@ -1,6 +1,7 @@
 #include "ElegooCloud.hpp"
 
 #include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <condition_variable>
 #include <cstddef>
@@ -815,6 +816,24 @@ std::string ElegooCloud::login_user_agent(bool dark)
     // The sign-in page issues slicer tokens only to a client that presents itself as ElegooSlicer;
     // with any other agent it hands back web-session tokens the device API rejects ("not logged in").
     return std::string("ElegooSlicer/1.5.3.5 (") + (dark ? "dark" : "light") + ") Mozilla/5.0 (Windows NT 10.0; Win64; x64)";
+}
+
+bool ElegooCloud::is_elegoo_page(const std::string& url)
+{
+    static const std::string scheme = "https://";
+    if (url.compare(0, scheme.size(), scheme) != 0)
+        return false;
+    std::string host = url.substr(scheme.size(), url.find_first_of("/?#", scheme.size()) - scheme.size());
+    if (host.find('@') != std::string::npos)
+        return false;
+    host = host.substr(0, host.find(':'));
+    std::transform(host.begin(), host.end(), host.begin(), [](unsigned char c) { return char(std::tolower(c)); });
+    for (const char* site : {"nexprint.com", "nexprint.cn", "elegoo.com", "elegoo.com.cn"}) {
+        const std::string s = site;
+        if (host == s || (host.size() > s.size() && host.compare(host.size() - s.size() - 1, std::string::npos, "." + s) == 0))
+            return true;
+    }
+    return false;
 }
 
 bool ElegooCloud::accept_login_report(const json& params, std::string& error)

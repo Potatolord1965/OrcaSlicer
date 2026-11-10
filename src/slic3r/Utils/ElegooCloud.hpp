@@ -136,6 +136,9 @@ public:
     // Login page of the Elegoo account site; it reports the tokens back over the WebView bridge.
     std::string        login_url(bool dark, const std::string& device_id) const;
     static std::string login_user_agent(bool dark);
+    // Whether `url` is an https page of Elegoo's own sites (nexprint, elegoo): the only pages the
+    // sign-in and online-models protocols are served to.
+    static bool        is_elegoo_page(const std::string& url);
     // Fills the account from the tokens a login page reported ("report.userInfo" params).
     bool accept_login_report(const nlohmann::json& params, std::string& error);
 

@@ -5,7 +5,7 @@
 # name = "Elegoo Centauri Carbon 2 (Device tab)"
 # description = "Shows an Elegoo Centauri Carbon 2 in the Device tab over your network: live status, temperatures, progress, pause/stop, and printing straight from the slicer."
 # author = "Unified Slicer"
-# version = "0.1.0"
+# version = "0.1.1"
 # ///
 """Elegoo Centauri Carbon 2 printer agent (LAN).
 
@@ -118,7 +118,8 @@ class MiniMqtt:
             s.close()
             code = data[1] if len(data) > 1 else -1
             raise ConnectionError("MQTT connection refused (code %s). Check the access code." % code)
-        s.settimeout(None)
+        # The pinger gets an answer every keepalive/2; a longer silence means the printer is gone.
+        s.settimeout(self.keepalive * 2)
         self.sock = s
         self.alive = True
         threading.Thread(target=self._reader, name="cc2-mqtt-read", daemon=True).start()

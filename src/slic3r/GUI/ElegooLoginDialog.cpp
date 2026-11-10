@@ -116,6 +116,11 @@ void ElegooLoginDialog::on_script_message(wxWebViewEvent& evt)
     const wxString    id     = wxString::FromUTF8(msg.contains("id") && msg["id"].is_string() ? msg["id"].get<std::string>() : "");
     if (type != "request")
         return;
+    // The sign-in is accepted from Elegoo's own page only, not from one the window was led to.
+    if (!ElegooCloud::is_elegoo_page(m_browser->GetCurrentURL().utf8_string())) {
+        BOOST_LOG_TRIVIAL(warning) << "Elegoo sign-in: message from a foreign page ignored";
+        return;
+    }
     if (method == "report.userInfo") {
         std::string error;
         const bool  ok = ElegooCloud::instance().accept_login_report(msg.value("params", json::object()), error);
