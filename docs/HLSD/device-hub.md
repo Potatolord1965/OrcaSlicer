@@ -7,11 +7,8 @@ shows the selected one.
 ```
 +-------------+--------------------------------------------+
 | All printers|                                            |
-|             |                                            |
-| Printer     |   page of the selected rail entry          |
-| Web UI      |                                            |
-|             |                                            |
-| Bambu Lab   |                                            |
+|             |   page of the selected rail entry,         |
+| Bambu Lab   |   or of the printer opened from it         |
 | Elegoo      |                                            |
 | Creality    |                                            |
 | Markforged  |                                            |
@@ -23,17 +20,37 @@ Code: `src/slic3r/GUI/DeviceHub/`.
 
 ## Rail entries
 
-- **All printers**: one list of the printers of every provider, with a Service column.
-- **Printer**: the native device page (`MonitorPanel`), driven by the live printer agent. Always on
-  the rail, so any service's printer can be monitored whatever printer preset is selected.
-- **Web UI**: the printer's own web interface (`PrinterWebView`). Shown when the printer has one.
+- **All printers**: the printers of every provider, with their service.
 - **One entry per cloud provider**, in `order()`.
 
-`MainFrame` creates the Printer and Web UI pages as `LazyPage`s whose parent is the hub's book, and
-`MainFrame::show_device()` tells the hub whether the selected preset uses the Printer page and has
-a Web UI (`DeviceHubPanel::show_printer_pages`). When the printer changes, the hub opens its page
-(Printer if the preset uses it, else Web UI, else the provider whose `handles_printer_preset()`
-accepts the preset, else All printers).
+On start the hub opens the page of the provider whose `handles_printer_preset()` accepts the
+selected preset, else All printers. A later preset change leaves the page in view alone.
+
+## Printer pages
+
+Two pages show one printer and have no rail button: they open only from that printer.
+
+- **Printer**: the native device page (`MonitorPanel`), driven by the live printer agent, so any
+  service's printer can be monitored whatever printer preset is selected. A service's
+  `open_printer()` and `MainFrame::jump_to_monitor()` open it.
+- **Web UI**: the printer's own web interface (`PrinterWebView`), for printers that have one.
+  `MainFrame::open_printer_web_ui()` opens it.
+
+`MainFrame` creates both as `LazyPage`s whose parent is the hub's book, and
+`MainFrame::show_device()` tells the hub whether the selected preset has a Web UI
+(`DeviceHubPanel::show_printer_pages`). While a printer page shows, the rail button of the page it
+was opened from stays lit; clicking it goes back to the printers.
+
+## List and card views
+
+A printer page lists its printers as rows (double-click to open) or as cards (click to open). The
+button in the page header switches, and the choice is the app setting `device_hub_view` (`list`, the
+default, or `cards`) for every page. A card shows the printer's picture, name, model, serial,
+service (on All printers), a Details button, the job's progress, and its status. The picture is
+`CloudPrinter::image` (a bitmap in `resources/images`, e.g. Bambu's `printer_preview_<model id>`),
+else the cover picture of the vendor profile named like the service whose model name matches,
+else a placeholder. The cards are rebuilt only when a printer changes, since the page refreshes
+every few seconds.
 
 The Multi-device and Calibration tabs still follow the selected preset, as before.
 
@@ -63,7 +80,7 @@ button:
 | `has_account()` | False for an entry with no account: the page shows `account_name()` as its subtitle and the primary button runs `login()` as "Add printer". |
 | `refresh_printers(done)` | The printers to list. `done` may run on any thread. |
 | `create_page(parent)` | Optional page of the provider's own instead of the generic one. |
-| `open_printer(parent, id)` | Double-click in a list. |
+| `open_printer(parent, id)` | Double-click in the list, or click on a card. |
 | `handles_printer_preset(config)`, `can_print()`, `show_print_dialog(parent, request)` | Printing to the service from the Plater with its own send dialog. |
 
 `CloudPrinterProviders` is the registry. `register_builtin()`

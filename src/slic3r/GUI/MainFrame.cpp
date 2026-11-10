@@ -1618,11 +1618,6 @@ void MainFrame::init_tabpanel() {
     });
     m_lazy_pages.push_back(m_printer_view_page);
     m_device_hub->set_printer_pages(m_monitor_page, m_printer_view_page);
-    m_device_hub->set_on_page_selected([this](const std::string& key) {
-        // Use the selected discovered machine when the preset has no host.
-        if (key == DeviceHubPanel::PAGE_WEB)
-            load_printer_url();
-    });
     Bind(EVT_LOAD_PRINTER_URL, [this](LoadPrinterViewEvent &evt) {
         //select_tab(MainFrame::tpMonitor);
         m_printer_url     = evt.GetString();
@@ -1673,9 +1668,9 @@ void MainFrame::show_device(bool should_use_native) {
     const bool use_printer_agents = wxGetApp().app_config->get_bool("use_printer_agents");
 
     // Unified Slicer: the Device tab is always the hub; the selected printer decides which of its
-    // own pages the hub's rail offers. Printer-agents mode shows the native page for every printer
-    // and the web page next to it unless the printer drives the native Bambu page; otherwise a
-    // printer gets either the native page or the web page.
+    // printer pages the hub has (they open from a printer, not from the rail). Printer-agents mode
+    // has the native page for every printer and the web page next to it unless the printer drives
+    // the native Bambu page; otherwise a printer gets either the native page or the web page.
     const bool want_native = use_printer_agents || should_use_native;
     const bool want_web    = use_printer_agents ? (wxGetApp().preset_bundle != nullptr && !wxGetApp().preset_bundle->use_bbl_device_tab()) :
                                                   !should_use_native;
